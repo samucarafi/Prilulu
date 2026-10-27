@@ -5,6 +5,7 @@ const inventoryItemSchema = new Schema({
   category: { type: String, enum: ["kit", "extra", "component"], required: true },
   totalQuantity: { type: Number, required: true, min: 0 },
   priceCents: { type: Number, default: 0, min: 0 },
+  image: { type: String, default: "" },
   available: { type: Boolean, default: true },
   lowStockThreshold: { type: Number, default: 1, min: 0 },
 }, { timestamps: true });

@@ -3,8 +3,8 @@ import Kit from "@/models/Kit";
 import InventoryItem from "@/models/InventoryItem";
 import Promotion from "@/models/Promotion";
 
-export type StoreKit = { id: string; name: string; theme: string; price: number; color: string; art: string; badge: string };
-export type StoreExtra = { id: string; name: string; price: number };
+export type StoreKit = { id: string; name: string; theme: string; price: number; color: string; art: string; badge: string; image?: string };
+export type StoreExtra = { id: string; name: string; price: number; image?: string };
 
 const colors = ["#f3d8d6", "#f6d98a", "#d5dfbf", "#d9d8ef", "#f2d4b8"];
 const art = ["🎀", "🎪", "🦒", "🌈", "🎂"];
@@ -23,8 +23,8 @@ export async function getStorefrontData() {
     }));
     return {
       connected: true,
-      kits: availableKits.map((kit, index) => ({ id: kit.slug, name: kit.name, theme: kit.theme || "Kit pegue e monte", price: kit.priceCents / 100, color: colors[index % colors.length], art: art[index % art.length], badge: kit.featured ? "Em destaque" : "" })),
-      extras: extras.map((item) => ({ id: String(item._id), name: item.name, price: item.priceCents / 100 })),
+      kits: availableKits.map((kit, index) => ({ id: kit.slug, name: kit.name, theme: kit.theme || "Kit pegue e monte", price: kit.priceCents / 100, color: colors[index % colors.length], art: art[index % art.length], badge: kit.featured ? "Em destaque" : "", image: kit.image || undefined })),
+      extras: extras.map((item) => ({ id: String(item._id), name: item.name, price: item.priceCents / 100, image: item.image || undefined })),
       promotions: promotions.map((promotion) => ({ title: promotion.title, subtitle: promotion.subtitle, image: promotion.image, href: promotion.href })),
     };
   } catch (error) {

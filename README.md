@@ -12,6 +12,8 @@ Loja independente em Next.js para kits de festa pegue e monte. A referência de 
 
 O app inclui vitrine ligada ao catálogo MongoDB, adicionais do inventário, validação de cupons ativos, solicitação de reserva e painel do proprietário para cadastrar peças, kits, cupons e divulgações e acompanhar reservas. Os pedidos ficam pendentes até a confirmação manual da loja. O cliente vê o total e o sinal de 50%; nenhum pagamento é processado pelo site nesta etapa.
 
+O painel aceita upload e troca de imagens PNG, JPG e WebP até 5 MB para kits e itens do inventário. Os arquivos ficam em `public/uploads` e o caminho fica registrado no MongoDB; em hospedagem com filesystem efêmero, migre os uploads para armazenamento persistente antes de publicar.
+
 ## Modelo de reserva e inventário
 
 O catálogo usa documentos `Kit`; cada kit aponta para peças em `InventoryItem`. A consulta preliminar compara peças compartilhadas com reservas confirmadas na data informada e falha fechada quando MongoDB não responde. Solicitações preliminares não bloqueiam estoque. A loja deve verificar retirada, devolução e tempo de preparação antes de confirmar. Implemente holds com expiração e bloqueio transacional antes de automatizar confirmações ou cobranças.

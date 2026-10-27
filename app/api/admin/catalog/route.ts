@@ -38,7 +38,8 @@ export async function POST(request: Request) {
       const totalQuantity = Number(body.totalQuantity);
       const priceCents = Math.round(Number(body.price) * 100);
       if (!name || !["component", "extra"].includes(category) || !Number.isInteger(totalQuantity) || totalQuantity < 0 || !Number.isFinite(priceCents) || priceCents < 0) return NextResponse.json({ error: "Confira nome, tipo, quantidade e preço." }, { status: 400 });
-      const item = await InventoryItem.create({ name, category, totalQuantity, priceCents, available: true });
+      const image = typeof body.image === "string" && body.image.startsWith("/uploads/") ? body.image : "";
+      const item = await InventoryItem.create({ name, category, totalQuantity, priceCents, image, available: true });
       return NextResponse.json({ ok: true, id: item.id }, { status: 201 });
     }
     if (body.type === "kit") {
@@ -48,7 +49,8 @@ export async function POST(request: Request) {
       const inventory = Array.isArray(body.inventory) ? body.inventory.filter((part: { itemId?: unknown; quantity?: unknown }) => typeof part.itemId === "string" && Number.isInteger(Number(part.quantity)) && Number(part.quantity) > 0).map((part: { itemId: string; quantity: number }) => ({ itemId: part.itemId, quantity: Number(part.quantity) })) : [];
       const items = await InventoryItem.find({ _id: { $in: inventory.map((part: { itemId: string }) => part.itemId) }, available: true }).lean();
       if (!name || !slug || !Number.isFinite(priceCents) || priceCents < 0 || !inventory.length || items.length !== new Set(inventory.map((part: { itemId: string }) => part.itemId)).size) return NextResponse.json({ error: "Informe nome, slug, preço e componentes válidos para o kit." }, { status: 400 });
-      const kit = await Kit.create({ name, slug, theme: String(body.theme ?? "").trim(), priceCents, inventory, active: true, featured: Boolean(body.featured) });
+      const image = typeof body.image === "string" && body.image.startsWith("/uploads/") ? body.image : "";
+      const kit = await Kit.create({ name, slug, theme: String(body.theme ?? "").trim(), priceCents, image, inventory, active: true, featured: Boolean(body.featured) });
       return NextResponse.json({ ok: true, id: kit.id }, { status: 201 });
     }
     if (body.type === "coupon") {
@@ -99,6 +101,7 @@ export async function PATCH(request: Request) {
         update.totalQuantity = quantity;
       }
       if (body.available !== undefined) update.available = Boolean(body.available);
+      if (typeof body.image === "string" && body.image.startsWith("/uploads/")) update.image = body.image;
       const item = await InventoryItem.findByIdAndUpdate(id, update, { new: true, runValidators: true });
       if (!item) return NextResponse.json({ error: "Item não encontrado." }, { status: 404 });
       return NextResponse.json({ ok: true });
@@ -116,6 +119,7 @@ export async function PATCH(request: Request) {
       }
       if (body.active !== undefined) update.active = Boolean(body.active);
       if (body.featured !== undefined) update.featured = Boolean(body.featured);
+      if (typeof body.image === "string" && body.image.startsWith("/uploads/")) update.image = body.image;
       const kit = await Kit.findByIdAndUpdate(id, update, { new: true, runValidators: true });
       if (!kit) return NextResponse.json({ error: "Kit não encontrado." }, { status: 404 });
       return NextResponse.json({ ok: true });
