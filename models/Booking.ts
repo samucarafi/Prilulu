@@ -17,4 +17,5 @@ const bookingSchema = new Schema({
 }, { timestamps: true });
 
 bookingSchema.index({ kit: 1, eventDate: 1, status: 1 });
+bookingSchema.index({ eventDate: 1, returnDate: 1, status: 1 });
 export default mongoose.models.Booking || mongoose.model("Booking", bookingSchema);
