@@ -25,6 +25,8 @@ type CustomPiece = { itemId: string; quantity: number };
 type SelectedExtra = { id: string; options: Record<string, string> };
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const ownerWhatsapp = (process.env.NEXT_PUBLIC_STORE_WHATSAPP || "5592993339848").replace(/\D/g, "");
+const formatOrderDate = (value: string) => new Date(`${value}T12:00:00.000Z`).toLocaleDateString("pt-BR", { timeZone: "UTC" });
 
 function PieceCategorySelector({ family, pieces, added, included, removed, onQuantity }: {
   family: string;
@@ -95,6 +97,7 @@ export default function Storefront({
   } | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [whatsappOrderLink, setWhatsappOrderLink] = useState("");
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
   const [availabilityKitId, setAvailabilityKitId] = useState("");
   const [availabilityDate, setAvailabilityDate] = useState("");
@@ -219,6 +222,7 @@ export default function Storefront({
     }
   };
   const finalize = async () => {
+    setWhatsappOrderLink("");
     if (!date) {
       setNotice(
         "Escolha a data da sua festa para consultar a disponibilidade.",
@@ -245,6 +249,7 @@ export default function Storefront({
         return;
       }
     }
+    const whatsappWindow = window.open("about:blank", "_blank");
     try {
       const response = await fetch("/api/availability", {
         method: "POST",
@@ -254,6 +259,7 @@ export default function Storefront({
       if (response.ok) {
         const result = await response.json();
         if (!result.available) {
+          whatsappWindow?.close();
           setNotice(result.message);
           return;
         }
@@ -271,12 +277,66 @@ export default function Storefront({
           }),
         });
         const bookingResult = await booking.json();
+        if (booking.ok && cart) {
+          const lines = [
+            "🎉 *Nova solicitação de reserva — Prilulu Festas*",
+            `Pedido: ${bookingResult.bookingId}`,
+            `Cliente: ${customer.name.trim()}`,
+            `Telefone: ${customer.phone.trim()}`,
+            `E-mail: ${customer.email.trim()}`,
+            `Kit: ${cart.kit.name}`,
+            `Data da festa: ${formatOrderDate(date)}`,
+            `Devolução prevista: ${formatOrderDate(bookingResult.returnDate)}`,
+          ];
+          const includedLines = (cart.kit.includedPieces ?? []).map(piece => {
+            const removedQuantity = cart.removedInventory.find(entry => entry.itemId === piece.id)?.quantity ?? 0;
+            const quantity = Math.max(0, (piece.quantity ?? 1) - removedQuantity);
+            const variant = [piece.theme, piece.color, piece.size].filter(Boolean).join(" · ");
+            return quantity ? `• ${piece.family}: ${variant || piece.name} × ${quantity}` : "";
+          }).filter(Boolean);
+          const addedLines = cart.customInventory.map(part => {
+            const piece = cart.kit.pieces?.find(entry => entry.id === part.itemId);
+            if (!piece) return "";
+            const variant = [piece.theme, piece.color, piece.size].filter(Boolean).join(" · ");
+            return `• ${piece.family}: ${variant || piece.name} × ${part.quantity}${piece.price ? ` (+ ${money(piece.price * part.quantity)})` : ""}`;
+          }).filter(Boolean);
+          const removedLines = cart.removedInventory.map(part => {
+            const piece = cart.kit.includedPieces?.find(entry => entry.id === part.itemId);
+            return piece ? `• ${piece.family}: ${[piece.theme, piece.color, piece.size].filter(Boolean).join(" · ") || piece.name} × ${part.quantity} (retirada)` : "";
+          }).filter(Boolean);
+          const extraLines = selected.map(selection => {
+            const extra = extras.find(entry => entry.id === selection.id);
+            if (!extra) return "";
+            const choices = extra.optionGroups.map(group => {
+              const option = group.options.find(entry => entry.id === selection.options[group.id]);
+              return option ? `${group.name}: ${option.name}` : "";
+            }).filter(Boolean);
+            return `• ${extra.name}${choices.length ? ` — ${choices.join(", ")}` : ""}`;
+          }).filter(Boolean);
+          if (includedLines.length) lines.push("Peças incluídas no kit:", ...includedLines);
+          if (addedLines.length) lines.push("Peças adicionadas:", ...addedLines);
+          if (removedLines.length) lines.push("Peças retiradas do kit:", ...removedLines);
+          if (extraLines.length) lines.push("Adicionais:", ...extraLines);
+          if (appliedCoupon) lines.push(`Cupom: ${appliedCoupon.code}`);
+          lines.push(
+            `Total: ${money(bookingResult.totalCents / 100)}`,
+            `Sinal de 50%: ${money(bookingResult.depositCents / 100)}`,
+            `Restante: ${money((bookingResult.totalCents - bookingResult.depositCents) / 100)} (retirada ou conforme combinado)`,
+            "Aguardando conferência e confirmação da loja.",
+          );
+          const whatsappUrl = `https://wa.me/${ownerWhatsapp}?text=${encodeURIComponent(lines.join("\n"))}`;
+          setWhatsappOrderLink(whatsappUrl);
+          if (whatsappWindow) whatsappWindow.location.href = whatsappUrl;
+        } else {
+          whatsappWindow?.close();
+        }
         setNotice(
           booking.ok
-            ? `${bookingResult.message} Pedido ${bookingResult.bookingId}. Total ${money(bookingResult.totalCents / 100)}; sinal de ${money(bookingResult.depositCents / 100)}.`
+            ? `${bookingResult.message} Pedido ${bookingResult.bookingId}. Total ${money(bookingResult.totalCents / 100)}; sinal de ${money(bookingResult.depositCents / 100)}. Para iniciar o atendimento, envie a mensagem pronta que abriu no WhatsApp tocando em Enviar.`
             : bookingResult.error,
         );
       } else {
+        whatsappWindow?.close();
         const result = await response.json().catch(() => null);
         setNotice(
           result?.message ??
@@ -285,6 +345,7 @@ export default function Storefront({
         );
       }
     } catch {
+      whatsappWindow?.close();
       setNotice(
         "Não foi possível consultar o estoque agora. Tente novamente em instantes.",
       );
@@ -969,12 +1030,14 @@ export default function Storefront({
                 na retirada
               </small>
             </div>
+            <p className="whatsapp-instruction"><b>Importante: falta uma etapa.</b> Depois de enviar a solicitação, o WhatsApp abrirá com a mensagem do pedido. Toque em <b>Enviar</b> por lá para a loja receber seu pedido e iniciar o atendimento.</p>
             {notice && <p className="notice">{notice}</p>}
+            {whatsappOrderLink && <a className="text-link whatsapp-order-link" href={whatsappOrderLink} target="_blank" rel="noreferrer">Abrir WhatsApp e enviar o resumo do pedido <ArrowRight size={15}/></a>}
             <button
               className="button button-pink button-full"
               onClick={finalize}
             >
-              Enviar solicitação de reserva <ArrowRight size={17} />
+              Enviar solicitação e continuar no WhatsApp <ArrowRight size={17} />
             </button>
             <small className="drawer-disclaimer">
               <ShieldCheck size={13} /> A reserva só é confirmada após

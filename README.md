@@ -6,6 +6,7 @@ Loja independente em Next.js para kits de festa pegue e monte. A referência de 
 
 1. Instale Node.js 20.9 ou superior.
 2. Copie `.env.example` para `.env.local` e configure `MONGODB_URI`.
+   Configure `NEXT_PUBLIC_STORE_WHATSAPP` com o número do proprietário em formato internacional, somente dígitos (por exemplo, `5511999999999`).
 3. Configure também `ADMIN_PASSWORD` e `ADMIN_SESSION_SECRET` para abrir o painel proprietário.
 4. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e `CLOUDINARY_API_SECRET` para habilitar upload de imagens. As credenciais ficam somente no servidor.
 5. Execute `npm install` e `npm run dev`.
@@ -14,6 +15,8 @@ Loja independente em Next.js para kits de festa pegue e monte. A referência de 
 ## Dados de demonstração
 
 Para inserir exemplos de estruturas internas, peças decorativas vinculadas às estruturas, adicionais com opções e kits fixos/personalizáveis no banco configurado em `.env.local`, execute `node --env-file=.env.local scripts/seed-exemplos.mjs`. A carga é repetível: usa IDs próprios e estáveis, atualiza somente esses documentos demonstrativos e não remove outros registros. Os nomes terminam com “· EXEMPLO”; os exemplos ficam ativos para aparecer na home durante testes e usam a imagem local `/images/hero-pega-monte.png`. Revise preços, estoque e disponibilidade antes de usar como catálogo real; substitua as imagens pelo admin via Cloudinary.
+
+Para padronizar documentos que já existem sem recriar itens nem alterar a composição dos kits, execute `node --env-file=.env.local scripts/migrar-variantes-catalogo.mjs`. A migração agrupa as capas nas categorias “Capas de painel” e “Capas de cilindro”, identifica temas Homem-Aranha e Patrulha Canina e preenche “Lisa” nas capas de cilindro que ainda não têm tema. Ela preserva fotos, quantidades, temas já definidos e referências dos kits.
 
 O app inclui vitrine ligada ao catálogo MongoDB, adicionais do inventário, validação de cupons ativos, solicitação de reserva e painel do proprietário para cadastrar peças, kits, cupons e divulgações e acompanhar reservas. Os pedidos ficam pendentes até a confirmação manual da loja. O cliente vê o total e o sinal de 50%; nenhum pagamento é processado pelo site nesta etapa.
 
@@ -36,3 +39,5 @@ Regra apresentada ao cliente: 50% para reservar e 50% na retirada. Nesta versão
 ## Operação e segurança
 
 O painel exige `ADMIN_PASSWORD` e `ADMIN_SESSION_SECRET`. A vitrine publica itens ativos com quantidade registrada, e a consulta de data confere componentes compartilhados nessa data. Configure endereço de retirada, período real de locação, tempo de higienização, regras de caução, contato e termos da loja. Antes de produção, automatize o bloqueio de inventário por intervalo de datas e proteja confirmações contra reservas concorrentes.
+
+Quando a loja confirma uma reserva que esgota alguma peça, solicitações ainda aguardando contato que não cabem mais no estoque são marcadas como indisponíveis. O admin oferece “Preparar aviso”: abre uma conversa individual no WhatsApp com número e texto preenchidos para a loja revisar e enviar. Depois de enviar, a loja pode clicar em “Marcar aviso enviado” para registrar a data sem cancelar. “Cancelar pedido” é uma ação separada; a loja também pode adicionar, substituir ou retirar itens de qualquer pedido em andamento. A composição é revalidada para as datas do evento e a disponibilidade é recalculada a partir do estoque físico e das reservas ativas. Sem WhatsApp Cloud API, o site não envia mensagens em segundo plano nem consegue confirmar a entrega por conta própria.

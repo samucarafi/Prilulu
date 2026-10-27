@@ -15,6 +15,7 @@ export async function POST(request: Request) {
     const name = String(input.name ?? "").trim().slice(0, 100);
     const email = String(input.email ?? "").trim().toLowerCase().slice(0, 200);
     const phone = String(input.phone ?? "").trim().slice(0, 40);
+    const whatsappUpdatesOptIn = true;
     const slug = String(input.kitId ?? "").trim().slice(0, 100);
     const customInventory = Array.isArray(input.customInventory) ? input.customInventory.slice(0, 40).map((part: { itemId?: unknown; quantity?: unknown }) => ({ itemId: String(part.itemId ?? ""), quantity: Number(part.quantity) })) : [];
     const removedInventory: Array<{ itemId: string; quantity: number }> = Array.isArray(input.removedInventory) ? input.removedInventory.slice(0, 40).map((part: { itemId?: unknown; quantity?: unknown }) => ({ itemId: String(part.itemId ?? ""), quantity: Number(part.quantity) })) : [];
@@ -87,7 +88,7 @@ export async function POST(request: Request) {
       const item = itemById.get(itemId);
       if (!item || item.totalQuantity - (used.get(itemId) ?? 0) < quantity) return NextResponse.json({ error: "A combinação escolhida excede o estoque disponível para essa data." }, { status: 409 });
     }
-    const pricedExtras: Array<{ item: string; quantity: number; selectedOptions: Array<{ groupId: string; groupName: string; optionId: string; optionName: string; image: string; priceDeltaCents: number }> }> = [];
+    const pricedExtras: Array<{ item: string; quantity: number; unitPriceCents: number; selectedOptions: Array<{ groupId: string; groupName: string; optionId: string; optionName: string; image: string; priceDeltaCents: number }> }> = [];
     let extrasSubtotalCents = 0;
     for (const requested of requestedExtras) {
       const id = requested.id;
@@ -109,7 +110,7 @@ export async function POST(request: Request) {
       const optionDeltaCents = selectedOptions.reduce((sum, option) => sum + option.priceDeltaCents, 0);
       if (item.priceCents + optionDeltaCents < 0) return NextResponse.json({ error: `As opções do adicional ${item.name} resultam em um valor inválido.` }, { status: 400 });
       extrasSubtotalCents += optionDeltaCents;
-      pricedExtras.push({ item: id, quantity: 1, selectedOptions });
+      pricedExtras.push({ item: id, quantity: 1, unitPriceCents: item.priceCents, selectedOptions });
     }
     const subtotalCents = (kit.customizable ? (kit.customBasePriceCents ?? kit.priceCents) : kit.priceCents) + customPartsCents + extras.reduce((sum, id) => sum + (itemById.get(id)?.priceCents ?? 0), 0) + extrasSubtotalCents;
     const couponCode = typeof input.coupon === "string" ? input.coupon.trim().toUpperCase() : "";
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
       const item = itemById.get(part.itemId)!;
       return { itemId: part.itemId, name: item.name, family: (item as { family?: string }).family ?? "", color: (item as { color?: string }).color ?? "", size: (item as { size?: string }).size ?? "", image: (item as { image?: string }).image ?? "", unitPriceCents: item.customPriceCents ?? 0, quantity: part.quantity };
     }) : [];
-    const [booking] = await Booking.create([{ customerName: name, email, phone, eventDate, returnDate, kit: kit._id, customInventory: customInventorySnapshot, removedInventory: removedInventory.map((part) => ({ itemId: part.itemId, quantity: part.quantity })), extras: pricedExtras, coupon: coupon?._id, totalCents, depositCents: Math.ceil(totalCents / 2), status: "awaiting_contact" }]);
+    const [booking] = await Booking.create([{ customerName: name, email, phone, whatsappUpdatesOptIn, eventDate, returnDate, kit: kit._id, customInventory: customInventorySnapshot, removedInventory: removedInventory.map((part) => ({ itemId: part.itemId, quantity: part.quantity })), extras: pricedExtras, coupon: coupon?._id, totalCents, depositCents: Math.ceil(totalCents / 2), status: "awaiting_contact" }]);
     if (coupon) {
       const usageFilter = { _id: coupon._id, active: true, ...(coupon.maxUses ? { uses: { $lt: coupon.maxUses } } : {}) };
       const updatedCoupon = await Coupon.findOneAndUpdate(usageFilter, { $inc: { uses: 1 } });

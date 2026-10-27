@@ -46,6 +46,264 @@ function parseOptionGroups(input: unknown): CatalogOptionGroup[] | null {
   return groups;
 }
 
+async function markUnavailablePendingBookings(reservedBooking: { _id: unknown; eventDate: Date; returnDate: Date }) {
+  const pending = await Booking.find({ status: "awaiting_contact", eventDate: { $lte: reservedBooking.returnDate } })
+    .populate({ path: "kit", select: "inventory" })
+    .sort({ createdAt: 1 })
+    .limit(100)
+    .lean() as any[];
+  if (!pending.length) return 0;
+
+  const activeBookings = await Booking.find({ status: { $in: ["awaiting_deposit", "confirmed", "picked_up"] }, eventDate: { $lte: new Date(Math.max(...pending.map(row => new Date(row.returnDate ?? row.eventDate).getTime()))) } })
+    .populate({ path: "kit", select: "inventory" }).lean() as unknown as InventoryUsageBooking[];
+  let unavailableCount = 0;
+  for (const candidate of pending) {
+    const candidateReturnDate = new Date(candidate.returnDate ?? new Date(new Date(candidate.eventDate).getTime() + 24 * 60 * 60 * 1000));
+    if (candidateReturnDate < reservedBooking.eventDate) continue;
+    const requiredIds = new Set<string>();
+    for (const part of candidate.kit?.inventory ?? []) requiredIds.add(String(part.itemId?._id ?? part.itemId));
+    for (const part of candidate.customInventory ?? []) requiredIds.add(String(part.itemId?._id ?? part.itemId));
+    for (const extra of candidate.extras ?? []) requiredIds.add(String(extra.item?._id ?? extra.item));
+    const range = { start: new Date(candidate.eventDate), end: candidateReturnDate };
+    const used = peakInventoryUsage(activeBookings, range);
+    const items = await InventoryItem.find({ _id: { $in: [...requiredIds] } }).select("name totalQuantity available optionGroups").lean() as unknown as Array<{ _id: unknown; name: string; totalQuantity: number; available: boolean; optionGroups?: Array<{ id: string; options: Array<{ id: string; name: string; stockQuantity: number | null }> }> }>;
+    const candidateRequired = new Map<string, number>();
+    for (const part of candidate.kit?.inventory ?? []) {
+      const id = String(part.itemId?._id ?? part.itemId);
+      candidateRequired.set(id, (candidateRequired.get(id) ?? 0) + Number(part.quantity ?? 0));
+    }
+    for (const part of candidate.removedInventory ?? []) {
+      const id = String(part.itemId?._id ?? part.itemId);
+      candidateRequired.set(id, (candidateRequired.get(id) ?? 0) - Number(part.quantity ?? 0));
+    }
+    for (const part of candidate.customInventory ?? []) {
+      const id = String(part.itemId?._id ?? part.itemId);
+      candidateRequired.set(id, (candidateRequired.get(id) ?? 0) + Number(part.quantity ?? 0));
+    }
+    for (const extra of candidate.extras ?? []) {
+      const id = String(extra.item?._id ?? extra.item);
+      candidateRequired.set(id, (candidateRequired.get(id) ?? 0) + Number(extra.quantity ?? 1));
+    }
+    const itemById = new Map(items.map(item => [String(item._id), item]));
+    const shortageId = [...candidateRequired].find(([id, quantity]) => {
+      const item = itemById.get(id);
+      return quantity > 0 && (!item || !item.available || (used.get(id) ?? 0) + quantity > item.totalQuantity);
+    })?.[0];
+    const shortage = shortageId ? itemById.get(shortageId) : undefined;
+    let unavailableItemName = shortage?.name ?? (shortageId ? "uma peça do pedido" : "");
+    if (!shortageId) {
+      const usedOptions = peakOptionUsage(activeBookings, range);
+      for (const extra of candidate.extras ?? []) {
+        const itemId = String(extra.item?._id ?? extra.item);
+        const item = itemById.get(itemId);
+        for (const selectedOption of extra.selectedOptions ?? []) {
+          const option = item?.optionGroups?.find(group => group.id === selectedOption.groupId)?.options.find(entry => entry.id === selectedOption.optionId);
+          if (option?.stockQuantity !== null && option?.stockQuantity !== undefined && (usedOptions.get(`${itemId}:${selectedOption.groupId}:${selectedOption.optionId}`) ?? 0) + Number(extra.quantity ?? 1) > option.stockQuantity) {
+            unavailableItemName = `${item?.name ?? "Adicional"} — ${option.name}`;
+            break;
+          }
+        }
+        if (unavailableItemName) break;
+      }
+    }
+    if (!unavailableItemName) continue;
+    const updated = await Booking.findOneAndUpdate(
+      { _id: candidate._id, status: "awaiting_contact" },
+      { $set: { status: "unavailable", unavailableItemId: shortageId, unavailableItemName, whatsappUpdatesOptIn: true, whatsappNotificationStatus: "pending", whatsappNotificationError: "" } },
+      { new: true },
+    );
+    if (updated) unavailableCount++;
+  }
+  return unavailableCount;
+}
+
+async function resolveUnavailableReason(candidate: any) {
+  const start = new Date(candidate.eventDate);
+  const end = new Date(candidate.returnDate ?? new Date(start.getTime() + 24 * 60 * 60 * 1000));
+  const activeBookings = await Booking.find({ status: { $in: ["awaiting_deposit", "confirmed", "picked_up"] }, eventDate: { $lte: end } })
+    .populate({ path: "kit", select: "inventory" }).lean() as unknown as InventoryUsageBooking[];
+  const range = { start, end };
+  const used = peakInventoryUsage(activeBookings, range);
+  const required = new Map<string, number>();
+  for (const part of candidate.kit?.inventory ?? []) {
+    const id = String(part.itemId?._id ?? part.itemId);
+    required.set(id, (required.get(id) ?? 0) + Number(part.quantity ?? 0));
+  }
+  for (const part of candidate.removedInventory ?? []) {
+    const id = String(part.itemId?._id ?? part.itemId);
+    required.set(id, (required.get(id) ?? 0) - Number(part.quantity ?? 0));
+  }
+  for (const part of candidate.customInventory ?? []) {
+    const id = String(part.itemId?._id ?? part.itemId);
+    required.set(id, (required.get(id) ?? 0) + Number(part.quantity ?? 0));
+  }
+  for (const extra of candidate.extras ?? []) {
+    const id = String(extra.item?._id ?? extra.item);
+    required.set(id, (required.get(id) ?? 0) + Number(extra.quantity ?? 1));
+  }
+  const items = await InventoryItem.find({ _id: { $in: [...required.keys()] } }).select("name totalQuantity available optionGroups").lean() as unknown as Array<{ _id: unknown; name: string; totalQuantity: number; available: boolean; optionGroups?: Array<{ id: string; options: Array<{ id: string; name: string; stockQuantity: number | null }> }> }>;
+  const itemById = new Map(items.map(item => [String(item._id), item]));
+  const unavailableId = [...required].find(([id, quantity]) => {
+    const item = itemById.get(id);
+    return quantity > 0 && (!item || !item.available || (used.get(id) ?? 0) + quantity > item.totalQuantity);
+  })?.[0];
+  if (unavailableId) return { itemId: unavailableId, name: itemById.get(unavailableId)?.name ?? "Item removido do catálogo" };
+
+  const usedOptions = peakOptionUsage(activeBookings, range);
+  for (const extra of candidate.extras ?? []) {
+    const id = String(extra.item?._id ?? extra.item);
+    const item = itemById.get(id);
+    for (const selectedOption of extra.selectedOptions ?? []) {
+      const option = item?.optionGroups?.find(group => group.id === selectedOption.groupId)?.options.find(entry => entry.id === selectedOption.optionId);
+      if (option?.stockQuantity !== null && option?.stockQuantity !== undefined && (usedOptions.get(`${id}:${selectedOption.groupId}:${selectedOption.optionId}`) ?? 0) + Number(extra.quantity ?? 1) > option.stockQuantity) {
+        return { itemId: id, name: `${item?.name ?? "Adicional"} — ${option.name}` };
+      }
+    }
+  }
+  return null;
+}
+
+async function editBookingComposition(id: string, current: any, edit: { action: "change" | "add"; itemId: string; replacementItemId: string; quantity: number }) {
+  const editableStatuses = ["awaiting_contact", "unavailable", "awaiting_deposit", "confirmed", "picked_up"];
+  if (!editableStatuses.includes(current.status)) return { ok: false as const, status: 409, error: "Pedidos devolvidos ou cancelados não podem ter os itens alterados." };
+  const kit = current.kit;
+  if (!kit) return { ok: false as const, status: 409, error: "O kit deste pedido não está mais disponível para edição." };
+  const isAdding = edit.action === "add";
+  const target = isAdding ? null : await InventoryItem.findById(edit.itemId).lean() as any;
+  if (!isAdding && (!target || !["component", "structure", "extra"].includes(target.category))) return { ok: false as const, status: 409, error: "O item selecionado não está no catálogo." };
+  if (!Number.isInteger(edit.quantity) || edit.quantity < 1 || edit.quantity > 50) return { ok: false as const, status: 400, error: "A quantidade deve ser de 1 a 50 unidades." };
+  const replacementId = isAdding ? edit.itemId : edit.replacementItemId;
+  const baseParts = (kit.inventory ?? []).map((part: any) => ({ itemId: String(part.itemId?._id ?? part.itemId), quantity: Number(part.quantity) }));
+  const baseQuantity = isAdding ? 0 : baseParts.filter((part: any) => part.itemId === edit.itemId).reduce((sum: number, part: any) => sum + part.quantity, 0);
+  const customParts = (current.customInventory ?? []).map((part: any) => ({ ...part, itemId: String(part.itemId?._id ?? part.itemId) }));
+  const removedParts = (current.removedInventory ?? []).map((part: any) => ({ itemId: String(part.itemId?._id ?? part.itemId), quantity: Number(part.quantity) }));
+  const extraParts = (current.extras ?? []).map((extra: any) => ({ ...extra, item: String(extra.item?._id ?? extra.item) }));
+  const alreadyRemovedBase = isAdding ? 0 : removedParts.filter((part: any) => part.itemId === edit.itemId).reduce((sum: number, part: any) => sum + part.quantity, 0);
+  const baseRemainingQuantity = Math.max(0, baseQuantity - alreadyRemovedBase);
+  const removedCustom = isAdding ? [] : customParts.filter((part: any) => part.itemId === edit.itemId);
+  const removedExtras = isAdding ? [] : extraParts.filter((extra: any) => extra.item === edit.itemId);
+  const targetQuantity = isAdding ? edit.quantity : baseRemainingQuantity + removedCustom.reduce((sum: number, part: any) => sum + Number(part.quantity ?? 0), 0) + removedExtras.reduce((sum: number, extra: any) => sum + Number(extra.quantity ?? 1), 0);
+  if (!isAdding && !targetQuantity) return { ok: false as const, status: 409, error: "Esse item não faz parte da composição do pedido." };
+  if (!isAdding && replacementId === edit.itemId) return { ok: false as const, status: 400, error: "Escolha outro item para fazer a substituição." };
+
+  let replacement: any = null;
+  if (replacementId) {
+    replacement = await InventoryItem.findOne({ _id: replacementId, available: true }).lean();
+    if (!replacement || !["component", "structure", "extra"].includes(replacement.category) || !isAdding && replacement.category !== target?.category) return { ok: false as const, status: 409, error: isAdding ? "Escolha um item ativo do catálogo." : "A substituição precisa ser um item ativo da mesma categoria." };
+  }
+
+  const nextRemoved = [...removedParts];
+  if (!isAdding && baseRemainingQuantity) {
+    const existing = nextRemoved.find((part: any) => part.itemId === edit.itemId);
+    if (existing) existing.quantity += baseRemainingQuantity;
+    else nextRemoved.push({ itemId: edit.itemId, quantity: baseRemainingQuantity });
+  }
+  let nextCustom = isAdding ? [...customParts] : customParts.filter((part: any) => part.itemId !== edit.itemId);
+  let nextExtras = isAdding ? [...extraParts] : extraParts.filter((extra: any) => extra.item !== edit.itemId);
+  const oldAddedPrice = removedCustom.reduce((sum: number, part: any) => sum + Number(part.unitPriceCents ?? 0) * Number(part.quantity ?? 0), 0)
+    + removedExtras.reduce((sum: number, extra: any) => sum + (Number(extra.unitPriceCents ?? target.priceCents ?? 0) + (extra.selectedOptions ?? []).reduce((subtotal: number, option: any) => subtotal + Number(option.priceDeltaCents ?? 0), 0)) * Number(extra.quantity ?? 1), 0);
+  let newAddedPrice = 0;
+  if (replacement) {
+    if (replacement.category === "extra") {
+      const selectedOptions: Array<{ groupId: string; groupName: string; optionId: string; optionName: string; image: string; priceDeltaCents: number }> = [];
+      for (const group of replacement.optionGroups ?? []) {
+        if (!group.required) continue;
+        const option = (group.options ?? []).find((entry: any) => entry.stockQuantity === null || entry.stockQuantity === undefined || entry.stockQuantity > 0);
+        if (!option) return { ok: false as const, status: 409, error: `O adicional substituto não tem opção disponível em “${group.name}”.` };
+        selectedOptions.push({ groupId: group.id, groupName: group.name, optionId: option.id, optionName: option.name, image: option.image ?? "", priceDeltaCents: option.priceDeltaCents ?? 0 });
+      }
+      nextExtras.push({ item: replacementId, quantity: targetQuantity, unitPriceCents: replacement.priceCents ?? 0, selectedOptions });
+      newAddedPrice = (Number(replacement.priceCents ?? 0) + selectedOptions.reduce((sum, option) => sum + option.priceDeltaCents, 0)) * targetQuantity;
+    } else {
+      const unitPriceCents = replacement.category === "component" ? Number(replacement.customPriceCents ?? 0) : 0;
+      nextCustom.push({ itemId: replacementId, name: replacement.name, family: replacement.family ?? "", color: replacement.color ?? "", size: replacement.size ?? "", image: replacement.image ?? "", unitPriceCents, quantity: targetQuantity });
+      newAddedPrice = unitPriceCents * targetQuantity;
+    }
+  }
+
+  const priceDelta = newAddedPrice - oldAddedPrice;
+  const totalCents = Math.max(0, Number(current.totalCents ?? 0) + priceDelta);
+  const returnDate = current.returnDate ?? new Date(new Date(current.eventDate).getTime() + 24 * 60 * 60 * 1000);
+  const required = new Map<string, number>();
+  for (const part of baseParts) required.set(part.itemId, (required.get(part.itemId) ?? 0) + part.quantity);
+  for (const part of nextRemoved) required.set(part.itemId, (required.get(part.itemId) ?? 0) - part.quantity);
+  for (const part of nextCustom) required.set(part.itemId, (required.get(part.itemId) ?? 0) + Number(part.quantity ?? 0));
+  for (const extra of nextExtras) required.set(extra.item, (required.get(extra.item) ?? 0) + Number(extra.quantity ?? 1));
+  const lockIds = [...new Set([...required.keys(), edit.itemId, ...(replacementId ? [replacementId] : [])])].sort();
+  const lockToken = randomUUID();
+  const lockedIds: string[] = [];
+  try {
+    const now = new Date();
+    for (const inventoryId of lockIds) {
+      const locked = await InventoryItem.findOneAndUpdate({ _id: inventoryId, $or: [{ reservationLockUntil: { $exists: false } }, { reservationLockUntil: null }, { reservationLockUntil: { $lt: now } }] }, { $set: { reservationLockToken: lockToken, reservationLockUntil: new Date(now.getTime() + 120_000) } }, { new: true }).select("_id").lean();
+      if (!locked) return { ok: false as const, status: 409, error: "Outra reserva está atualizando o estoque destes itens. Atualize e tente novamente." };
+      lockedIds.push(inventoryId);
+    }
+    const activeBookings = await Booking.find({ _id: { $ne: id }, eventDate: { $lte: returnDate }, status: { $in: ["awaiting_deposit", "confirmed", "picked_up"] } }).populate({ path: "kit", select: "inventory" }).lean() as unknown as InventoryUsageBooking[];
+    const range = { start: new Date(current.eventDate), end: new Date(returnDate) };
+    const used = peakInventoryUsage(activeBookings, range);
+    const usedOptions = peakOptionUsage(activeBookings, range);
+    const requiredIds = [...required.keys()];
+    const inventoryItems = await InventoryItem.find({ _id: { $in: requiredIds } }).select("name totalQuantity available category optionGroups requiresStructureId").lean() as unknown as Array<{ _id: unknown; name: string; totalQuantity: number; available: boolean; category: string; optionGroups?: Array<{ id: string; options: Array<{ id: string; name: string; stockQuantity: number | null }> }>; requiresStructureId?: unknown }>;
+    const itemById = new Map(inventoryItems.map(item => [String(item._id), item]));
+    let shortageId = [...required].find(([inventoryId, quantity]) => {
+      const inventoryItem = itemById.get(inventoryId);
+      return quantity > 0 && (!inventoryItem || !inventoryItem.available || (used.get(inventoryId) ?? 0) + quantity > inventoryItem.totalQuantity);
+    })?.[0] ?? "";
+    let shortageName = shortageId ? itemById.get(shortageId)?.name ?? "Item do pedido" : "";
+    if (!shortageId) {
+      const missingStructure = [...required].find(([inventoryId, quantity]) => {
+        const inventoryItem = itemById.get(inventoryId);
+        return quantity > 0 && inventoryItem?.category === "component" && inventoryItem.requiresStructureId && (required.get(String(inventoryItem.requiresStructureId)) ?? 0) < quantity;
+      });
+      if (missingStructure) {
+        shortageId = missingStructure[0];
+        shortageName = `${itemById.get(shortageId)?.name ?? "Peça"} (estrutura necessária)`;
+      }
+    }
+    if (!shortageId) {
+      for (const extra of nextExtras) {
+        const inventoryItem = itemById.get(extra.item);
+        for (const optionSelection of extra.selectedOptions ?? []) {
+          const option = inventoryItem?.optionGroups?.find(group => group.id === optionSelection.groupId)?.options.find(entry => entry.id === optionSelection.optionId);
+          if (option?.stockQuantity !== null && option?.stockQuantity !== undefined && (usedOptions.get(`${extra.item}:${optionSelection.groupId}:${optionSelection.optionId}`) ?? 0) + Number(extra.quantity ?? 1) > option.stockQuantity) {
+            shortageId = extra.item;
+            shortageName = `${inventoryItem?.name ?? "Adicional"} — ${option.name}`;
+            break;
+          }
+        }
+        if (shortageId) break;
+      }
+    }
+    if (shortageId && ["awaiting_deposit", "confirmed", "picked_up"].includes(current.status)) return { ok: false as const, status: 409, error: `A alteração ainda excede o estoque de “${shortageName}”. Escolha outra opção ou retire mais um item.` };
+
+    let status = current.status;
+    if (["awaiting_contact", "unavailable"].includes(current.status)) status = shortageId ? "unavailable" : "awaiting_contact";
+    const update: Record<string, unknown> = {
+      customInventory: nextCustom,
+      removedInventory: nextRemoved,
+      extras: nextExtras,
+      totalCents,
+      depositCents: Math.ceil(totalCents / 2),
+      status,
+      whatsappUpdatesOptIn: true,
+      whatsappNotificationStatus: shortageId ? (current.unavailableItemId && String(current.unavailableItemId) === shortageId ? current.whatsappNotificationStatus ?? "pending" : "pending") : current.whatsappNotificationStatus === "sent" ? "sent" : "not_required",
+    };
+    if (shortageId) {
+      update.unavailableItemId = shortageId;
+      update.unavailableItemName = shortageName;
+    } else {
+      update.unavailableItemId = null;
+      update.unavailableItemName = "";
+    }
+    const updated = await Booking.findOneAndUpdate({ _id: id, status: current.status }, { $set: update }, { new: true, runValidators: true });
+    if (!updated) return { ok: false as const, status: 409, error: "O pedido mudou enquanto era editado. Atualize o painel e tente novamente." };
+    return { ok: true as const, status, shortageName, totalCents, depositCents: Math.ceil(totalCents / 2) };
+  } finally {
+    if (lockedIds.length) await InventoryItem.updateMany({ _id: { $in: lockedIds }, reservationLockToken: lockToken }, { $unset: { reservationLockToken: 1, reservationLockUntil: 1 } });
+  }
+}
+
 export async function GET() {
   if (!(await isAdminAuthenticated())) return NextResponse.json({ error: "Acesso não autorizado." }, { status: 401 });
   try {
@@ -53,11 +311,28 @@ export async function GET() {
     const [items, kits, bookings, coupons, promotions] = await Promise.all([
       InventoryItem.find().sort({ name: 1 }).lean(),
       Kit.find().populate("inventory.itemId").sort({ name: 1 }).lean(),
-      Booking.find().populate("kit").populate("customInventory.itemId").populate("removedInventory.itemId").populate("extras.item").sort({ createdAt: -1 }).limit(100).lean(),
+      Booking.find().populate({ path: "kit", populate: { path: "inventory.itemId" } }).populate("customInventory.itemId").populate("removedInventory.itemId").populate("extras.item").populate("unavailableItemId", "name family").sort({ createdAt: -1 }).limit(100).lean(),
       Coupon.find().sort({ createdAt: -1 }).lean(),
       Promotion.find().sort({ position: 1 }).lean(),
     ]);
-    return NextResponse.json({ items, kits, bookings: bookings.map((booking) => ({ ...booking, returnDate: booking.returnDate && booking.returnDate > booking.eventDate ? booking.returnDate : new Date(booking.eventDate.getTime() + 24 * 60 * 60 * 1000) })), coupons, promotions });
+    const enrichedBookings = await Promise.all(bookings.map(async (booking: any) => {
+      const placeholder = !booking.unavailableItemName || booking.unavailableItemName === "uma peça do pedido";
+      if (booking.status === "unavailable" && (placeholder || !booking.unavailableItemId)) {
+        const reason = await resolveUnavailableReason(booking);
+        if (reason) {
+          booking.unavailableItemId = reason.itemId;
+          booking.unavailableItemName = reason.name;
+          await Booking.updateOne({ _id: booking._id, status: "unavailable" }, { $set: { unavailableItemId: reason.itemId, unavailableItemName: reason.name } });
+        }
+      }
+      const populatedItemName = typeof booking.unavailableItemId === "object" ? booking.unavailableItemId?.name : "";
+      return {
+        ...booking,
+        unavailableItemName: booking.unavailableItemName || populatedItemName || "",
+        returnDate: booking.returnDate && booking.returnDate > booking.eventDate ? booking.returnDate : new Date(booking.eventDate.getTime() + 24 * 60 * 60 * 1000),
+      };
+    }));
+    return NextResponse.json({ items, kits, bookings: enrichedBookings, coupons, promotions });
   } catch (error) {
     console.error("Falha ao carregar o painel:", error);
     return NextResponse.json({ error: "Não foi possível carregar os dados do painel." }, { status: 503 });
@@ -310,9 +585,35 @@ export async function PATCH(request: Request) {
     if (body.type === "booking") {
       const allowedStatuses = ["awaiting_deposit", "confirmed", "picked_up", "returned", "cancelled"];
       if (body.status !== undefined && !allowedStatuses.includes(body.status)) return NextResponse.json({ error: "Status de reserva inválido." }, { status: 400 });
-      if (body.status === undefined && body.returnDate === undefined) return NextResponse.json({ error: "Informe uma etapa ou data de devolução." }, { status: 400 });
+      if (body.status === undefined && body.returnDate === undefined && body.markWhatsAppSent !== true && body.cancelUnavailable !== true && body.editBookingItems === undefined) return NextResponse.json({ error: "Informe uma etapa, data de devolução, edição do pedido ou registro de aviso." }, { status: 400 });
       const current = await Booking.findById(id).populate({ path: "kit", select: "inventory" }).lean() as any;
       if (!current) return NextResponse.json({ error: "Reserva não encontrada." }, { status: 404 });
+      if (body.editBookingItems !== undefined) {
+        const edit = body.editBookingItems as { action?: unknown; itemId?: unknown; replacementItemId?: unknown; quantity?: unknown };
+        const itemId = typeof edit?.itemId === "string" ? edit.itemId : "";
+        const replacementItemId = typeof edit?.replacementItemId === "string" ? edit.replacementItemId : "";
+        const action = edit?.action === "add" ? "add" : "change";
+        if (!/^[a-f\d]{24}$/i.test(itemId) || replacementItemId && !/^[a-f\d]{24}$/i.test(replacementItemId)) return NextResponse.json({ error: "Escolha um item válido para alterar o pedido." }, { status: 400 });
+        const result = await editBookingComposition(id, current, { action, itemId, replacementItemId, quantity: Number(edit.quantity ?? 1) });
+        if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+        return NextResponse.json({ ok: true, status: result.status, unavailableItemName: result.shortageName, totalCents: result.totalCents, depositCents: result.depositCents });
+      }
+      if (body.markWhatsAppSent === true) {
+        if (current.status !== "unavailable") return NextResponse.json({ error: "Só é possível registrar o envio de avisos para pedidos indisponíveis." }, { status: 409 });
+        const updated = await Booking.findOneAndUpdate(
+          { _id: id, status: "unavailable" },
+          { $set: { whatsappNotificationStatus: "sent", whatsappNotificationSentAt: new Date(), whatsappNotificationError: "" } },
+          { new: true },
+        );
+        if (!updated) return NextResponse.json({ error: "O pedido mudou enquanto era atualizado. Atualize o painel e tente novamente." }, { status: 409 });
+        return NextResponse.json({ ok: true });
+      }
+      if (body.cancelUnavailable === true) {
+        if (current.status !== "unavailable") return NextResponse.json({ error: "Só é possível cancelar um pedido indisponível por esta ação." }, { status: 409 });
+        const updated = await Booking.findOneAndUpdate({ _id: id, status: "unavailable" }, { $set: { status: "cancelled" } }, { new: true });
+        if (!updated) return NextResponse.json({ error: "O pedido mudou enquanto era atualizado. Atualize o painel e tente novamente." }, { status: 409 });
+        return NextResponse.json({ ok: true });
+      }
       const storedReturnDate = current.returnDate ?? current.eventDate;
       const currentReturnDate = storedReturnDate > current.eventDate ? storedReturnDate : new Date(current.eventDate.getTime() + 24 * 60 * 60 * 1000);
       let returnDate = currentReturnDate;
@@ -372,7 +673,16 @@ export async function PATCH(request: Request) {
         }
         const booking = await Booking.findOneAndUpdate({ _id: id, status: current.status, returnDate: storedReturnDate }, update, { new: true, runValidators: true });
         if (!booking) return NextResponse.json({ error: "A reserva mudou enquanto era atualizada. Atualize o painel e tente novamente." }, { status: 409 });
-        return NextResponse.json({ ok: true });
+        if (lockedIds.length) {
+          await InventoryItem.updateMany({ _id: { $in: lockedIds }, reservationLockToken: lockToken }, { $unset: { reservationLockToken: 1, reservationLockUntil: 1 } });
+          lockedIds.length = 0;
+        }
+        let unavailableCount = 0;
+        if (!currentIsReserved && nextIsReserved) {
+          try { unavailableCount = await markUnavailablePendingBookings({ _id: booking._id, eventDate: current.eventDate, returnDate }); }
+          catch (error) { console.error("Falha ao atualizar pedidos afetados pelo estoque:", error); }
+        }
+        return NextResponse.json({ ok: true, unavailableCount });
       } finally {
         if (lockedIds.length) await InventoryItem.updateMany({ _id: { $in: lockedIds }, reservationLockToken: lockToken }, { $unset: { reservationLockToken: 1, reservationLockUntil: 1 } });
       }
