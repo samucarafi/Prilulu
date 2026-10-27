@@ -10,6 +10,10 @@ export type KitRecord = {
   imagePublicId: string;
   active: boolean;
   featured: boolean;
+  customizable?: boolean;
+  allowCustomerEdits?: boolean;
+  customBasePriceCents?: number;
+  customizableItemIds?: mongoose.Types.ObjectId[];
   inventory: Array<{ itemId: mongoose.Types.ObjectId; quantity: number }>;
 };
 
@@ -23,6 +27,10 @@ const kitSchema = new Schema({
   imagePublicId: { type: String, default: "" },
   active: { type: Boolean, default: true, index: true },
   featured: { type: Boolean, default: false },
+  customizable: { type: Boolean, default: false, index: true },
+  allowCustomerEdits: { type: Boolean, default: false, index: true },
+  customBasePriceCents: { type: Number, default: 0, min: 0 },
+  customizableItemIds: [{ type: Schema.Types.ObjectId, ref: "InventoryItem" }],
   inventory: [{ itemId: { type: Schema.Types.ObjectId, ref: "InventoryItem", required: true }, quantity: { type: Number, required: true, min: 1 } }],
 }, { timestamps: true });
 

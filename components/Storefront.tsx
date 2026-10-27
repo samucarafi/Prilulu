@@ -21,6 +21,8 @@ import { FaInstagram } from "react-icons/fa";
 import type { StoreExtra, StoreKit } from "@/lib/storefront-data";
 
 type Kit = StoreKit;
+type CustomPiece = { itemId: string; quantity: number };
+type SelectedExtra = { id: string; options: Record<string, string> };
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -40,8 +42,10 @@ export default function Storefront({
     href: string;
   }>;
 }) {
-  const [cart, setCart] = useState<{ kit: Kit; extras: string[] } | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
+  const [cart, setCart] = useState<{ kit: Kit; extras: SelectedExtra[]; customInventory: CustomPiece[]; removedInventory: CustomPiece[] } | null>(null);
+  const [selected, setSelected] = useState<SelectedExtra[]>([]);
+  const [customInventory, setCustomInventory] = useState<CustomPiece[]>([]);
+  const [customPieceFamily, setCustomPieceFamily] = useState("all");
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
   const [favoritesLoaded, setFavoritesLoaded] = useState(false);
   const [date, setDate] = useState("");
@@ -84,22 +88,32 @@ export default function Storefront({
   const total = useMemo(
     () =>
       cart
-        ? cart.kit.price +
-          cart.extras.reduce(
-            (sum, id) => sum + (extras.find((e) => e.id === id)?.price || 0),
-            0,
-          )
+        ? (cart.kit.customizable ? (cart.kit.customBasePrice ?? cart.kit.price) : cart.kit.price) +
+          (cart.kit.customizable || cart.kit.allowCustomerEdits ? cart.customInventory.reduce((sum, part) => sum + (cart.kit.pieces?.find(piece => piece.id === part.itemId)?.price ?? 0) * part.quantity, 0) : 0) +
+          cart.extras.reduce((sum, selection) => {
+            const extra = extras.find((entry) => entry.id === selection.id);
+            if (!extra) return sum;
+            const optionsTotal = extra.optionGroups.reduce((groupTotal, group) => {
+              const option = group.options.find((entry) => entry.id === selection.options[group.id]);
+              return groupTotal + (option?.priceDelta ?? 0);
+            }, 0);
+            return sum + extra.price + optionsTotal;
+          }, 0)
         : 0,
     [cart],
   );
   const promoTotal = appliedCoupon ? appliedCoupon.totalCents / 100 : total;
   const availabilityKit = kits.find((kit) => kit.id === availabilityKitId);
+  const customPieceFamilies = [...new Set((cart?.kit.pieces ?? []).map(piece=>piece.family || "Outras peças"))].sort((a,b)=>a.localeCompare(b,"pt-BR"));
+  const visibleCustomPieces = (cart?.kit.pieces ?? []).filter(piece=>customPieceFamily==="all" || (piece.family || "Outras peças")===customPieceFamily);
   const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
     .toISOString()
     .slice(0, 10);
   const addKit = (kit: Kit) => {
-    setCart({ kit, extras: [] });
+    setCart({ kit, extras: [], customInventory: [], removedInventory: [] });
     setSelected([]);
+    setCustomInventory([]);
+    setCustomPieceFamily("all");
     document.getElementById("catalogo")?.scrollIntoView({ behavior: "smooth" });
   };
   const applyCoupon = async () => {
@@ -182,11 +196,23 @@ export default function Storefront({
       setNotice("Preencha seu nome, e-mail e telefone para enviar o pedido.");
       return;
     }
+    if (cart?.kit.customizable && cart.customInventory.length === 0) {
+      setNotice("Escolha pelo menos uma peça para montar seu kit.");
+      return;
+    }
+    for (const selection of selected) {
+      const extra = extras.find((item) => item.id === selection.id);
+      const missingGroup = extra?.optionGroups.find((group) => group.required && !selection.options[group.id]);
+      if (extra && missingGroup) {
+        setNotice(`Escolha uma opção para “${missingGroup.name}” no adicional ${extra.name}.`);
+        return;
+      }
+    }
     try {
       const response = await fetch("/api/availability", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kitId: cart?.kit.id, date }),
+        body: JSON.stringify({ kitId: cart?.kit.id, date, customInventory: cart?.customInventory ?? [], removedInventory: cart?.removedInventory ?? [] }),
       });
       if (response.ok) {
         const result = await response.json();
@@ -201,6 +227,8 @@ export default function Storefront({
             ...customer,
             kitId: cart?.kit.id,
             date,
+            customInventory: cart?.customInventory ?? [],
+            removedInventory: cart?.removedInventory ?? [],
             extras: selected,
             coupon: appliedCoupon?.code,
           }),
@@ -435,8 +463,8 @@ export default function Storefront({
                       <h3>{kit.name}</h3>
                     </div>
                     <div className="product-price">
-                      <b>{money(kit.price)}</b>
-                      <small>por evento</small>
+                      <b>{money(kit.customizable ? (kit.customBasePrice ?? kit.price) : kit.price)}</b>
+                      <small>{kit.customizable ? "preço-base · monte do seu jeito" : kit.allowCustomerEdits ? "por evento · personalize" : "por evento"}</small>
                     </div>
                   </div>
                   <div className="product-foot">
@@ -444,7 +472,7 @@ export default function Storefront({
                       <i /> Consulte disponibilidade
                     </span>
                     <button className="text-link" onClick={() => addKit(kit)}>
-                      Ver kit <ArrowRight size={15} />
+                      {kit.customizable ? "Montar meu kit" : kit.allowCustomerEdits ? "Personalizar kit" : "Ver kit"} <ArrowRight size={15} />
                     </button>
                   </div>
                 </article>
@@ -533,8 +561,10 @@ export default function Storefront({
                       className="text-link"
                       type="button"
                       onClick={() => {
-                        setCart({ kit: availabilityKit, extras: [] });
+                        setCart({ kit: availabilityKit, extras: [], customInventory: [], removedInventory: [] });
                         setSelected([]);
+                        setCustomInventory([]);
+                        setCustomPieceFamily("all");
                         setDate(availabilityDate);
                         setNotice("");
                         setCoupon("");
@@ -797,8 +827,26 @@ export default function Storefront({
                 <small>{cart.kit.theme}</small>
                 <b>{cart.kit.name}</b>
               </div>
-              <strong>{money(cart.kit.price)}</strong>
+              <strong>{money(cart.kit.customizable ? (cart.kit.customBasePrice ?? cart.kit.price) : cart.kit.price)}</strong>
             </div>
+                        {(cart.kit.customizable || cart.kit.allowCustomerEdits) && <section className="custom-kit-builder">
+              <div className="extras-heading"><b>{cart.kit.customizable ? "Monte seu kit" : "Personalize este kit pronto"}</b><small>{cart.kit.customizable ? "Escolha as peças decorativas. As estruturas de suporte já estão incluídas e ficam ocultas." : "Mantenha as peças incluídas, troque as opções disponíveis ou adicione itens extras. A loja controla cada item por estoque."}</small></div>
+              {cart.kit.allowCustomerEdits && (cart.kit.includedPieces ?? []).length > 0 && <div className="custom-kit-included"><b>Peças que já vêm neste kit</b><small>Retirar uma peça devolve essa unidade ao estoque da data. Estruturas internas não podem ser removidas.</small>{cart.kit.includedPieces!.map(piece=>{const included=piece.quantity??1;const removed=cart.removedInventory.find(entry=>entry.itemId===piece.id)?.quantity??0;const retained=included-removed;return <article className="custom-kit-included-row" key={piece.id}><span>{piece.image?<Image src={piece.image} alt="" width={44} height={44} className="extra-photo"/>:<span className="custom-piece-placeholder small">✳</span>}<span><b>{piece.name}</b><small>{[piece.color,piece.size].filter(Boolean).join(" · ")||piece.family} · {retained} de {included} unidade(s) incluída(s)</small></span></span><span className="custom-piece-quantity"><button type="button" aria-label={`Retirar uma unidade de ${piece.name}`} disabled={removed>=included} onClick={()=>{const next=removed<included?(removed?cart.removedInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity+1}:entry):[...cart.removedInventory,{itemId:piece.id,quantity:1}]):cart.removedInventory;setCart({...cart,removedInventory:next});setAppliedCoupon(null);setCouponMessage("");}}>−</button><button type="button" aria-label={`Manter uma unidade de ${piece.name}`} disabled={!removed} onClick={()=>{const next=cart.removedInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity-1}:entry).filter(entry=>entry.quantity>0);setCart({...cart,removedInventory:next});setAppliedCoupon(null);setCouponMessage("");}}>+</button></span></article>;})}</div>}
+              <label className="custom-piece-category">Categoria<select value={customPieceFamily} onChange={event=>setCustomPieceFamily(event.target.value)}><option value="all">Todas as categorias ({cart.kit.pieces?.length ?? 0})</option>{customPieceFamilies.map(family=><option value={family} key={family}>{family}</option>)}</select></label>
+              <div className="custom-piece-list">{visibleCustomPieces.map(piece => {
+                const quantity = cart.customInventory.find(entry => entry.itemId === piece.id)?.quantity ?? 0;
+                const includedQuantity = cart.kit.includedPieces?.find(entry => entry.id === piece.id)?.quantity ?? 0;
+                const removedQuantity = cart.removedInventory.find(entry => entry.itemId === piece.id)?.quantity ?? 0;
+                const maxAdditional = Math.max(0, piece.stock - includedQuantity + removedQuantity);
+                return <article className={quantity ? "custom-piece selected" : "custom-piece"} key={piece.id}>
+                  {piece.image ? <Image src={piece.image} alt={piece.name} width={70} height={70} className="extra-photo"/> : <span className="custom-piece-placeholder">✳</span>}
+                  <span className="custom-piece-info"><b>{piece.name}</b><small>{[piece.family, piece.color, piece.size].filter(Boolean).join(" · ")}</small><small>{piece.price ? `+ ${money(piece.price)} por unidade` : "Sem acréscimo"}{includedQuantity ? ` · ${includedQuantity} já incluída(s)` : ""}</small></span>
+                  <div className="custom-piece-quantity"><button type="button" aria-label={`Remover uma unidade de ${piece.name}`} disabled={!quantity} onClick={() => { const next=cart.customInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity-1}:entry).filter(entry=>entry.quantity>0); setCustomInventory(next); setCart({...cart,customInventory:next}); setAppliedCoupon(null); setCouponMessage(""); }}>−</button><b>{quantity}</b><button type="button" aria-label={`Adicionar uma unidade de ${piece.name}`} disabled={quantity >= maxAdditional} onClick={() => { const found=cart.customInventory.some(entry=>entry.itemId===piece.id); const next=found?cart.customInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity+1}:entry):[...cart.customInventory,{itemId:piece.id,quantity:1}]; setCustomInventory(next); setCart({...cart,customInventory:next}); setAppliedCoupon(null); setCouponMessage(""); }}>+</button></div>
+                </article>;
+              })}</div>
+              {visibleCustomPieces.length===0 && <small>Não há peças cadastradas nesta categoria para este kit.</small>}
+              {(cart.customInventory.length>0 || cart.removedInventory.length>0) && <div className="custom-kit-selection-summary"><b>{cart.customInventory.reduce((sum,part)=>sum+part.quantity,0)} peça(s) adicionada(s) · {cart.removedInventory.reduce((sum,part)=>sum+part.quantity,0)} retirada(s)</b><span>{[...cart.customInventory.map(part=>{const piece=cart.kit.pieces?.find(item=>item.id===part.itemId);return piece?`+ ${piece.name} × ${part.quantity}`:""}),...cart.removedInventory.map(part=>{const piece=cart.kit.includedPieces?.find(item=>item.id===part.itemId);return piece?`− ${piece.name} × ${part.quantity}`:""})].filter(Boolean).join(" · ")}</span></div>}
+            </section>}
             <label className="form-label">
               Seu nome
               <input
@@ -848,34 +896,32 @@ export default function Storefront({
               </small>
             </div>
             <div className="extras-list">
-              {extras.map((item) => (
-                <label key={item.id} className="extra-row">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(item.id)}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...selected, item.id]
-                        : selected.filter((x) => x !== item.id);
-                      setSelected(next);
-                      setCart({ ...cart, extras: next });
-                      setAppliedCoupon(null);
-                      setCouponMessage("");
-                    }}
-                  />
-                  {item.image && (
-                    <Image
-                      src={item.image}
-                      alt=""
-                      width={38}
-                      height={38}
-                      className="extra-photo"
-                    />
-                  )}
-                  <span>{item.name}</span>
-                  <b>+ {money(item.price)}</b>
-                </label>
-              ))}
+              {extras.map((item) => {
+                const selection = selected.find((entry) => entry.id === item.id);
+                const chosenOptions = item.optionGroups.map(group => group.options.find(option => option.id === selection?.options[group.id])).filter(Boolean);
+                const optionDelta = chosenOptions.reduce((sum, option) => sum + (option?.priceDelta ?? 0), 0);
+                const preview = [...chosenOptions].reverse().find(option => option?.image)?.image ?? item.image;
+                return <div key={item.id} className={selection ? "extra-card selected" : "extra-card"}>
+                  <label className="extra-row">
+                    <input type="checkbox" checked={Boolean(selection)} onChange={(event) => {
+                      const next = event.target.checked
+                        ? [...selected, { id: item.id, options: Object.fromEntries(item.optionGroups.filter(group=>group.required).map(group=>[group.id,group.options.find(option=>option.stockQuantity===null||option.stockQuantity>0)?.id]).filter(([,optionId])=>Boolean(optionId))) }]
+                        : selected.filter(entry => entry.id !== item.id);
+                      setSelected(next); setCart({ ...cart, extras: next }); setAppliedCoupon(null); setCouponMessage("");
+                    }}/>
+                    {(preview || item.image) && <Image src={preview || item.image!} alt={selection ? "Prévia de " + item.name : ""} width={46} height={46} className="extra-photo"/>}
+                    <span>{item.name}</span>
+                    <b>+ {money(item.price + optionDelta)}</b>
+                  </label>
+                  {selection && item.optionGroups.length > 0 && <div className="extra-choice-panel">
+                    {item.optionGroups.map(group => {
+                      const chosen = group.options.find(option=>option.id===selection.options[group.id]);
+                      return <label className="extra-choice" key={group.id}><span>{group.name}{group.required ? " *" : ""}</span><select required={group.required} value={selection.options[group.id] ?? ""} onChange={event=>{const next=selected.map(entry=>entry.id===item.id?{...entry,options:{...entry.options,[group.id]:event.target.value}}:entry);setSelected(next);setCart({...cart,extras:next});setAppliedCoupon(null);setCouponMessage("");}}><option value="">Selecione</option>{group.options.map(option=><option key={option.id} value={option.id} disabled={option.stockQuantity===0}>{option.name}{option.priceDelta!==0?" ("+(option.priceDelta>0?"+ ":"− ")+money(Math.abs(option.priceDelta))+")":""}{option.stockQuantity===0?" — indisponível":""}</option>)}</select>{chosen?.image&&<small>Prévia: {chosen.name}</small>}</label>;
+                    })}
+                    {preview&&<div className="extra-preview"><Image src={preview} alt={"Prévia da personalização: "+item.name} width={120} height={90}/><span>Prévia da combinação selecionada</span></div>}
+                  </div>}
+                </div>;
+              })}
             </div>
             <div className="coupon-box">
               <input
