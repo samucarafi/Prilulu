@@ -7,12 +7,13 @@ Loja independente em Next.js para kits de festa pegue e monte. A referência de 
 1. Instale Node.js 20.9 ou superior.
 2. Copie `.env.example` para `.env.local` e configure `MONGODB_URI`.
 3. Configure também `ADMIN_PASSWORD` e `ADMIN_SESSION_SECRET` para abrir o painel proprietário.
-4. Execute `npm install` e `npm run dev`.
-5. Acesse `http://localhost:3002`.
+4. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` e `CLOUDINARY_API_SECRET` para habilitar upload de imagens. As credenciais ficam somente no servidor.
+5. Execute `npm install` e `npm run dev`.
+6. Acesse `http://localhost:3002`.
 
 O app inclui vitrine ligada ao catálogo MongoDB, adicionais do inventário, validação de cupons ativos, solicitação de reserva e painel do proprietário para cadastrar peças, kits, cupons e divulgações e acompanhar reservas. Os pedidos ficam pendentes até a confirmação manual da loja. O cliente vê o total e o sinal de 50%; nenhum pagamento é processado pelo site nesta etapa.
 
-O painel aceita upload e troca de imagens PNG, JPG e WebP até 5 MB para kits e itens do inventário. Os arquivos ficam em `public/uploads` e o caminho fica registrado no MongoDB; em hospedagem com filesystem efêmero, migre os uploads para armazenamento persistente antes de publicar.
+O painel envia imagens PNG, JPG e WebP de até 5 MB para a pasta `prilulu-festas/catalogo` no Cloudinary. O MongoDB guarda a URL segura e o identificador da imagem; imagens não são gravadas no código nem em `public/uploads`. Sem as três variáveis Cloudinary configuradas, o upload fica desativado.
 
 ## Modelo de reserva e inventário
 

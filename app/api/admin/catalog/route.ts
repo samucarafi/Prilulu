@@ -8,6 +8,7 @@ import Booking from "@/models/Booking";
 import Coupon from "@/models/Coupon";
 import Promotion from "@/models/Promotion";
 import { peakInventoryUsage, type InventoryUsageBooking } from "@/lib/inventory-usage";
+import { isCloudinaryImageUrl } from "@/lib/cloudinary";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +41,10 @@ export async function POST(request: Request) {
       const totalQuantity = Number(body.totalQuantity);
       const priceCents = Math.round(Number(body.price) * 100);
       if (!name || !["component", "extra"].includes(category) || !Number.isInteger(totalQuantity) || totalQuantity < 0 || !Number.isFinite(priceCents) || priceCents < 0) return NextResponse.json({ error: "Confira nome, tipo, quantidade e preço." }, { status: 400 });
-      const image = typeof body.image === "string" && body.image.startsWith("/uploads/") ? body.image : "";
-      const item = await InventoryItem.create({ name, category, totalQuantity, priceCents, image, available: true });
+      const image = body.image === undefined || body.image === "" ? "" : isCloudinaryImageUrl(body.image) ? body.image : null;
+      if (image === null) return NextResponse.json({ error: "A foto deve estar hospedada no Cloudinary." }, { status: 400 });
+      const imagePublicId = typeof body.imagePublicId === "string" && body.imagePublicId.startsWith("prilulu-festas/catalogo/") ? body.imagePublicId : "";
+      const item = await InventoryItem.create({ name, category, totalQuantity, priceCents, image, imagePublicId, available: true });
       return NextResponse.json({ ok: true, id: item.id }, { status: 201 });
     }
     if (body.type === "kit") {
@@ -52,8 +55,10 @@ export async function POST(request: Request) {
       const items = await InventoryItem.find({ _id: { $in: inventory.map((part: { itemId: string }) => part.itemId) }, available: true, category: "component" }).lean();
       if (!name || !slug || !Number.isFinite(priceCents) || priceCents < 0 || !inventory.length || items.length !== new Set(inventory.map((part: { itemId: string }) => part.itemId)).size || inventory.length !== new Set(inventory.map((part: { itemId: string }) => part.itemId)).size) return NextResponse.json({ error: "Informe nome, slug, preço e componentes válidos para o kit." }, { status: 400 });
       if (inventory.some((part: { itemId: string; quantity: number }) => part.quantity > (items.find((item) => String(item._id) === part.itemId)?.totalQuantity ?? 0))) return NextResponse.json({ error: "A quantidade configurada no kit não pode superar o estoque físico da peça." }, { status: 400 });
-      const image = typeof body.image === "string" && body.image.startsWith("/uploads/") ? body.image : "";
-      const kit = await Kit.create({ name, slug, theme: String(body.theme ?? "").trim(), priceCents, image, inventory, active: true, featured: Boolean(body.featured) });
+      const image = body.image === undefined || body.image === "" ? "" : isCloudinaryImageUrl(body.image) ? body.image : null;
+      if (image === null) return NextResponse.json({ error: "A foto deve estar hospedada no Cloudinary." }, { status: 400 });
+      const imagePublicId = typeof body.imagePublicId === "string" && body.imagePublicId.startsWith("prilulu-festas/catalogo/") ? body.imagePublicId : "";
+      const kit = await Kit.create({ name, slug, theme: String(body.theme ?? "").trim(), priceCents, image, imagePublicId, inventory, active: true, featured: Boolean(body.featured) });
       return NextResponse.json({ ok: true, id: kit.id }, { status: 201 });
     }
     if (body.type === "coupon") {
@@ -86,6 +91,26 @@ export async function PATCH(request: Request) {
     const id = String(body.id ?? "");
     if (body.type === "item") {
       const update: Record<string, unknown> = {};
+      const currentItem = await InventoryItem.findById(id).lean() as { category?: string } | null;
+      if (!currentItem) return NextResponse.json({ error: "Peça não encontrada." }, { status: 404 });
+      if (body.name !== undefined) {
+        const name = String(body.name).trim();
+        if (!name) return NextResponse.json({ error: "Informe o nome da peça." }, { status: 400 });
+        update.name = name;
+      }
+      if (body.category !== undefined) {
+        if (!["component", "extra"].includes(body.category)) return NextResponse.json({ error: "Categoria inválida." }, { status: 400 });
+        if (body.category !== currentItem.category) {
+          const referenced = await Kit.exists({ "inventory.itemId": id });
+          if (referenced) return NextResponse.json({ error: "Esta peça compõe um ou mais kits. A categoria não pode ser alterada enquanto estiver vinculada a eles." }, { status: 409 });
+        }
+        update.category = body.category;
+      }
+      if (body.price !== undefined) {
+        const priceCents = Math.round(Number(body.price) * 100);
+        if (!Number.isFinite(priceCents) || priceCents < 0) return NextResponse.json({ error: "Preço inválido." }, { status: 400 });
+        update.priceCents = priceCents;
+      }
       if (body.totalQuantity !== undefined) {
         const quantity = Number(body.totalQuantity);
         if (!Number.isInteger(quantity) || quantity < 0) return NextResponse.json({ error: "Quantidade inválida." }, { status: 400 });
@@ -95,25 +120,66 @@ export async function PATCH(request: Request) {
         update.totalQuantity = quantity;
       }
       if (body.available !== undefined) update.available = Boolean(body.available);
-      if (typeof body.image === "string" && body.image.startsWith("/uploads/")) update.image = body.image;
+      if (body.image !== undefined) {
+        if (!isCloudinaryImageUrl(body.image)) return NextResponse.json({ error: "A foto deve estar hospedada no Cloudinary." }, { status: 400 });
+        update.image = body.image;
+        if (typeof body.imagePublicId === "string" && body.imagePublicId.startsWith("prilulu-festas/catalogo/")) update.imagePublicId = body.imagePublicId;
+      }
       const item = await InventoryItem.findByIdAndUpdate(id, update, { new: true, runValidators: true });
       if (!item) return NextResponse.json({ error: "Item não encontrado." }, { status: 404 });
       return NextResponse.json({ ok: true });
     }
     if (body.type === "kit") {
       const update: Record<string, unknown> = {};
+      const currentKit = await Kit.findById(id).lean();
+      if (!currentKit) return NextResponse.json({ error: "Kit não encontrado." }, { status: 404 });
+      if (body.name !== undefined) {
+        const name = String(body.name).trim();
+        if (!name) return NextResponse.json({ error: "Informe o nome do kit." }, { status: 400 });
+        update.name = name;
+      }
+      if (body.slug !== undefined) {
+        const slug = String(body.slug).trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-|-$/g, "");
+        if (!slug) return NextResponse.json({ error: "Informe um identificador válido para o kit." }, { status: 400 });
+        if (await Kit.exists({ slug, _id: { $ne: id } })) return NextResponse.json({ error: "Este identificador já está sendo usado por outro kit." }, { status: 409 });
+        update.slug = slug;
+      }
+      if (body.theme !== undefined) update.theme = String(body.theme).trim();
+      if (body.price !== undefined) {
+        const priceCents = Math.round(Number(body.price) * 100);
+        if (!Number.isFinite(priceCents) || priceCents < 0) return NextResponse.json({ error: "Preço inválido." }, { status: 400 });
+        update.priceCents = priceCents;
+      }
+      if (body.inventory !== undefined) {
+        const inventory = Array.isArray(body.inventory) ? body.inventory.filter((part: { itemId?: unknown; quantity?: unknown }) => typeof part.itemId === "string" && Number.isInteger(Number(part.quantity)) && Number(part.quantity) > 0).map((part: { itemId: string; quantity: number }) => ({ itemId: part.itemId, quantity: Number(part.quantity) })) : [];
+        const uniqueIds = new Set(inventory.map((part: { itemId: string }) => part.itemId));
+        const parts = await InventoryItem.find({ _id: { $in: inventory.map((part: { itemId: string }) => part.itemId) }, category: "component", available: true }).lean();
+        if (!inventory.length || uniqueIds.size !== inventory.length || parts.length !== uniqueIds.size) return NextResponse.json({ error: "Selecione componentes de kit ativos, sem repetir peças, e informe suas quantidades." }, { status: 400 });
+        if (inventory.some((part: { itemId: string; quantity: number }) => part.quantity > (parts.find((item) => String(item._id) === part.itemId)?.totalQuantity ?? 0))) return NextResponse.json({ error: "A quantidade configurada no kit não pode superar o estoque físico da peça." }, { status: 400 });
+        const previousComposition = currentKit.inventory.map((part) => `${String(part.itemId)}:${part.quantity}`).sort().join("|");
+        const nextComposition = inventory.map((part: { itemId: string; quantity: number }) => `${part.itemId}:${part.quantity}`).sort().join("|");
+        if (previousComposition !== nextComposition && await Booking.exists({ kit: id, status: { $in: ["awaiting_contact", "awaiting_deposit", "confirmed", "picked_up"] } })) {
+          return NextResponse.json({ error: "A composição deste kit não pode mudar enquanto houver pedidos ou reservas em andamento. Edite os outros dados ou crie um novo kit para preservar os pedidos existentes." }, { status: 409 });
+        }
+        update.inventory = inventory;
+      }
       if (body.active === true) {
-        const kit = await Kit.findById(id).lean();
-        if (!kit?.inventory?.length) return NextResponse.json({ error: "Cadastre peças no inventário antes de publicar este kit." }, { status: 409 });
-        const parts = await InventoryItem.find({ _id: { $in: kit.inventory.map((part) => part.itemId) }, available: true }).lean();
-        if (parts.length !== kit.inventory.length || kit.inventory.some((part) => {
+        const inventory = (update.inventory as Array<{ itemId: string; quantity: number }> | undefined) ?? currentKit.inventory.map((part) => ({ itemId: String(part.itemId), quantity: part.quantity }));
+        if (!inventory.length) return NextResponse.json({ error: "Cadastre peças no inventário antes de publicar este kit." }, { status: 409 });
+        const parts = await InventoryItem.find({ _id: { $in: inventory.map((part) => part.itemId) }, available: true, category: "component" }).lean();
+        if (parts.length !== inventory.length || inventory.some((part) => {
           const item = parts.find((entry) => String(entry._id) === String(part.itemId));
           return !item || item.totalQuantity < part.quantity;
         })) return NextResponse.json({ error: "Não há estoque ativo suficiente para publicar este kit." }, { status: 409 });
       }
       if (body.active !== undefined) update.active = Boolean(body.active);
       if (body.featured !== undefined) update.featured = Boolean(body.featured);
-      if (typeof body.image === "string" && body.image.startsWith("/uploads/")) update.image = body.image;
+      if (body.description !== undefined) update.description = String(body.description).trim();
+      if (body.image !== undefined) {
+        if (!isCloudinaryImageUrl(body.image)) return NextResponse.json({ error: "A foto deve estar hospedada no Cloudinary." }, { status: 400 });
+        update.image = body.image;
+        if (typeof body.imagePublicId === "string" && body.imagePublicId.startsWith("prilulu-festas/catalogo/")) update.imagePublicId = body.imagePublicId;
+      }
       const kit = await Kit.findByIdAndUpdate(id, update, { new: true, runValidators: true });
       if (!kit) return NextResponse.json({ error: "Kit não encontrado." }, { status: 404 });
       return NextResponse.json({ ok: true });
@@ -122,7 +188,7 @@ export async function PATCH(request: Request) {
       const allowedStatuses = ["awaiting_deposit", "confirmed", "picked_up", "returned", "cancelled"];
       if (body.status !== undefined && !allowedStatuses.includes(body.status)) return NextResponse.json({ error: "Status de reserva inválido." }, { status: 400 });
       if (body.status === undefined && body.returnDate === undefined) return NextResponse.json({ error: "Informe uma etapa ou data de devolução." }, { status: 400 });
-      const current = await Booking.findById(id).populate({ path: "kit", select: "inventory" }).lean();
+      const current = await Booking.findById(id).populate({ path: "kit", select: "inventory" }).lean() as any;
       if (!current) return NextResponse.json({ error: "Reserva não encontrada." }, { status: 404 });
       const storedReturnDate = current.returnDate ?? current.eventDate;
       const currentReturnDate = storedReturnDate > current.eventDate ? storedReturnDate : new Date(current.eventDate.getTime() + 24 * 60 * 60 * 1000);

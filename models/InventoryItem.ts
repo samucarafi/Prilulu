@@ -6,6 +6,7 @@ const inventoryItemSchema = new Schema({
   totalQuantity: { type: Number, required: true, min: 0 },
   priceCents: { type: Number, default: 0, min: 0 },
   image: { type: String, default: "" },
+  imagePublicId: { type: String, default: "" },
   available: { type: Boolean, default: true },
   lowStockThreshold: { type: Number, default: 1, min: 0 },
   reservationLockToken: { type: String, default: undefined },

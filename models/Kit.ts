@@ -7,6 +7,7 @@ export type KitRecord = {
   description: string;
   priceCents: number;
   image: string;
+  imagePublicId: string;
   active: boolean;
   featured: boolean;
   inventory: Array<{ itemId: mongoose.Types.ObjectId; quantity: number }>;
@@ -19,6 +20,7 @@ const kitSchema = new Schema({
   description: { type: String, default: "" },
   priceCents: { type: Number, required: true, min: 0 },
   image: { type: String, default: "" },
+  imagePublicId: { type: String, default: "" },
   active: { type: Boolean, default: true, index: true },
   featured: { type: Boolean, default: false },
   inventory: [{ itemId: { type: Schema.Types.ObjectId, ref: "InventoryItem", required: true }, quantity: { type: Number, required: true, min: 1 } }],
