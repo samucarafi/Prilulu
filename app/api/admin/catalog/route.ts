@@ -77,17 +77,18 @@ export async function POST(request: Request) {
       const customPriceCents = category === "component" ? Math.round(Number(body.customPrice ?? 0) * 100) : 0;
       if (!name || !["component", "structure", "extra"].includes(category) || !Number.isInteger(totalQuantity) || totalQuantity < 0 || !Number.isFinite(priceCents) || priceCents < 0 || !Number.isInteger(customPriceCents) || customPriceCents < 0) return NextResponse.json({ error: "Confira nome, tipo, quantidade e preço." }, { status: 400 });
       const family = String(body.family ?? "").trim();
+      const theme = String(body.theme ?? "").trim();
       const color = String(body.color ?? "").trim();
       const size = String(body.size ?? "").trim();
       const requiresStructureId = String(body.requiresStructureId ?? "").trim();
       if (category === "component" && requiresStructureId && !await InventoryItem.exists({ _id: requiresStructureId, category: "structure" })) return NextResponse.json({ error: "A estrutura selecionada não existe ou não é uma estrutura interna." }, { status: 400 });
-      if (category === "component" && family && await InventoryItem.exists({ category: "component", family, color, size })) return NextResponse.json({ error: "Esta combinação de categoria, cor e tamanho já existe. Edite o estoque da peça cadastrada." }, { status: 409 });
+      if (category === "component" && family && await InventoryItem.exists({ category: "component", family, theme, color, size })) return NextResponse.json({ error: "Esta combinação de categoria, tema, cor e tamanho já existe. Edite o estoque da variação cadastrada." }, { status: 409 });
       const image = body.image === undefined || body.image === "" ? "" : isCloudinaryImageUrl(body.image) ? body.image : null;
       if (image === null) return NextResponse.json({ error: "A foto deve estar hospedada no Cloudinary." }, { status: 400 });
       const imagePublicId = typeof body.imagePublicId === "string" && body.imagePublicId.startsWith("prilulu-festas/catalogo/") ? body.imagePublicId : "";
       const optionGroups = category === "extra" ? parseOptionGroups(body.optionGroups ?? []) : [];
       if (optionGroups === null) return NextResponse.json({ error: "Confira os nomes, valores e fotos das opções do adicional." }, { status: 400 });
-      const item = await InventoryItem.create({ name, category, family, color, size, totalQuantity, priceCents, customPriceCents, requiresStructureId: requiresStructureId || null, image, imagePublicId, optionGroups, available: true });
+      const item = await InventoryItem.create({ name, category, family, theme, color, size, totalQuantity, priceCents, customPriceCents, requiresStructureId: requiresStructureId || null, image, imagePublicId, optionGroups, available: true });
       return NextResponse.json({ ok: true, id: item.id }, { status: 201 });
     }
     if (body.type === "kit") {
@@ -140,7 +141,7 @@ export async function PATCH(request: Request) {
     const id = String(body.id ?? "");
     if (body.type === "item") {
       const update: Record<string, unknown> = {};
-      const currentItem = await InventoryItem.findById(id).lean() as { category?: string; family?: string; color?: string; size?: string; requiresStructureId?: unknown } | null;
+      const currentItem = await InventoryItem.findById(id).lean() as { category?: string; family?: string; theme?: string; color?: string; size?: string; requiresStructureId?: unknown } | null;
       if (!currentItem) return NextResponse.json({ error: "Peça não encontrada." }, { status: 404 });
       if (body.name !== undefined) {
         const name = String(body.name).trim();
@@ -160,7 +161,7 @@ export async function PATCH(request: Request) {
         if (body.category !== "extra") update.priceCents = 0;
         if (body.category !== "component") update.customPriceCents = 0;
       }
-      for (const field of ["family", "color", "size"] as const) if (body[field] !== undefined) update[field] = String(body[field]).trim();
+      for (const field of ["family", "theme", "color", "size"] as const) if (body[field] !== undefined) update[field] = String(body[field]).trim();
       const targetCategory = body.category ?? currentItem.category;
       if (body.requiresStructureId !== undefined) {
         const requiresStructureId = String(body.requiresStructureId ?? "").trim();
@@ -170,15 +171,16 @@ export async function PATCH(request: Request) {
         update.requiresStructureId = requiresStructureId || null;
       }
       const family = String(body.family ?? currentItem.family ?? "").trim();
+      const theme = String(body.theme ?? currentItem.theme ?? "").trim();
       const color = String(body.color ?? currentItem.color ?? "").trim();
       const size = String(body.size ?? currentItem.size ?? "").trim();
-      const variantChanged = family !== (currentItem.family ?? "") || color !== (currentItem.color ?? "") || size !== (currentItem.size ?? "");
+      const variantChanged = family !== (currentItem.family ?? "") || theme !== (currentItem.theme ?? "") || color !== (currentItem.color ?? "") || size !== (currentItem.size ?? "");
       if (["component", "structure"].includes(currentItem.category ?? "") && variantChanged) {
         const activeKitBookings = await Booking.find({ status: { $in: ["awaiting_contact", "awaiting_deposit", "confirmed", "picked_up"] } }).populate({ path: "kit", select: "inventory" }).lean();
         const isReserved = activeKitBookings.some((booking: any) => (booking.kit?.inventory ?? []).some((part: { itemId: unknown }) => String(part.itemId) === id) || (booking.customInventory ?? []).some((part: { itemId: unknown }) => String(part.itemId) === id));
-        if (isReserved) return NextResponse.json({ error: "A cor, o tamanho e a categoria não podem mudar enquanto esta peça fizer parte de um kit reservado. Crie outra variante para manter os pedidos atuais corretos." }, { status: 409 });
+        if (isReserved) return NextResponse.json({ error: "A categoria, o tema, a cor e o tamanho não podem mudar enquanto esta peça fizer parte de um kit reservado. Crie outra variação para preservar os pedidos atuais." }, { status: 409 });
       }
-      if (targetCategory === "component" && family && await InventoryItem.exists({ category: "component", family, color, size, _id: { $ne: id } })) return NextResponse.json({ error: "Esta combinação de categoria, cor e tamanho já existe. Edite o estoque da peça cadastrada." }, { status: 409 });
+      if (targetCategory === "component" && family && await InventoryItem.exists({ category: "component", family, theme, color, size, _id: { $ne: id } })) return NextResponse.json({ error: "Esta combinação de categoria, tema, cor e tamanho já existe. Edite o estoque da variação cadastrada." }, { status: 409 });
       if (body.customPrice !== undefined) {
         const customPriceCents = Math.round(Number(body.customPrice) * 100);
         if (!Number.isInteger(customPriceCents) || customPriceCents < 0 || (body.category ?? currentItem.category) !== "component") return NextResponse.json({ error: "Preço inválido para personalização." }, { status: 400 });

@@ -20,6 +20,7 @@ const inventoryItemSchema = new Schema({
   name: { type: String, required: true, trim: true },
   category: { type: String, enum: ["kit", "extra", "component", "structure"], required: true },
   family: { type: String, default: "", trim: true, index: true },
+  theme: { type: String, default: "", trim: true, index: true },
   color: { type: String, default: "", trim: true },
   size: { type: String, default: "", trim: true },
   totalQuantity: { type: Number, required: true, min: 0 },
