@@ -10,7 +10,7 @@ globalCache.mongooseCache = cache;
 
 export async function connectMongoDB() {
   if (cache.connection) return cache.connection;
-  cache.promise ??= mongoose.connect(uri);
+  cache.promise ??= mongoose.connect(uri!);
   cache.connection = await cache.promise;
   return cache.connection;
 }

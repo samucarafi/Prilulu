@@ -2,7 +2,6 @@ import Link from "next/link";
 import { adminConfigured, isAdminAuthenticated } from "@/lib/admin-auth";
 import AdminLogin from "@/components/AdminLogin";
 import AdminWorkspace from "@/components/AdminWorkspace";
-import "./admin.css";
 
 export const dynamic = "force-dynamic";
 

@@ -1,4 +1,16 @@
-import mongoose, { Schema } from "mongoose";
+import mongoose, { Schema, type Model } from "mongoose";
+
+export type CouponRecord = {
+  code: string;
+  discountPercent?: number;
+  discountCents?: number;
+  minimumCents: number;
+  startsAt?: Date | null;
+  expiresAt?: Date | null;
+  maxUses?: number;
+  uses: number;
+  active: boolean;
+};
 
 const couponSchema = new Schema({
   code: { type: String, required: true, unique: true, uppercase: true, trim: true },
@@ -12,4 +24,5 @@ const couponSchema = new Schema({
   active: { type: Boolean, default: true },
 }, { timestamps: true });
 
-export default mongoose.models.Coupon || mongoose.model("Coupon", couponSchema);
+const Coupon = (mongoose.models.Coupon as Model<CouponRecord> | undefined) ?? mongoose.model<CouponRecord>("Coupon", couponSchema);
+export default Coupon;
