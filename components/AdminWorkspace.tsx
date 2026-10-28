@@ -1,6 +1,13 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  Fragment,
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { ArrowLeft, LogOut, Plus, RefreshCw } from "lucide-react";
@@ -480,6 +487,192 @@ function InventoryValueSelect({
 
       <option value="__create__">+ Cadastrar novo valor...</option>
     </select>
+  );
+}
+
+function ItemEditForm({
+  row,
+  items,
+  busy,
+  onSubmit,
+  onCancel,
+}: {
+  row: Row;
+  items: Row[];
+  busy: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onCancel: () => void;
+}) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const [category, setCategory] = useState(row.category);
+
+  useEffect(() => {
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [row._id]);
+
+  return (
+    <form
+      ref={formRef}
+      key={row._id}
+      className="admin-form admin-edit-form inventory-inline-edit-form"
+      style={{
+        gridColumn: "1 / -1",
+        width: "100%",
+        margin: "12px 0 20px",
+        padding: 18,
+        border: "1px solid #e7dce8",
+        borderRadius: 14,
+        background: "#fffafd",
+        scrollMarginTop: 24,
+      }}
+      onSubmit={onSubmit}
+    >
+      <b>Editar: {row.name}</b>
+      <small className="inventory-form-guidance">
+        A edição preserva as referências deste item nos kits. Reutilize os nomes
+        e atributos existentes para evitar duplicatas; cada combinação de tema,
+        cor e tamanho deve ter seu próprio cadastro e foto.
+      </small>
+      <InventoryValueSelect
+        items={items}
+        field="name"
+        label="Nome do produto *"
+        placeholder="Nome do produto"
+        initialValue={row.name ?? ""}
+        required
+      />
+      {row.category === "structure" ? (
+        <>
+          <input type="hidden" name="category" value="structure" />
+          <label className="form-label">
+            Tipo
+            <input value="Estrutura física" readOnly />
+          </label>
+        </>
+      ) : (
+        <select
+          name="category"
+          value={category}
+          onChange={(event) => setCategory(event.target.value)}
+        >
+          <option value="component">Peça de kit</option>
+          <option value="structure">Estrutura física oculta</option>
+          <option value="extra">Adicional</option>
+        </select>
+      )}
+      {category === "structure" ? (
+        <>
+          <input type="hidden" name="family" value="Estruturas internas" />
+          <label className="form-label">
+            Categoria
+            <input value="Estruturas internas" readOnly />
+          </label>
+          <small className="inventory-form-guidance">
+            Estruturas físicas ficam sempre na categoria “Estruturas internas” e
+            não podem ter essa categoria alterada.
+          </small>
+        </>
+      ) : (
+        <InventoryValueSelect
+          items={items}
+          field="family"
+          label="Selecione a categoria *"
+          placeholder="Nova categoria"
+          initialValue={row.family ?? ""}
+          required
+        />
+      )}
+      <InventoryValueSelect
+        items={items}
+        field="theme"
+        label="Temática (opcional)"
+        placeholder="Nova temática"
+        initialValue={row.theme ?? ""}
+      />
+      <InventoryValueSelect
+        items={items}
+        field="color"
+        label="Cor (opcional)"
+        placeholder="Nova cor"
+        initialValue={row.color ?? ""}
+      />
+      <InventoryValueSelect
+        items={items}
+        field="size"
+        label="Tamanho (opcional)"
+        placeholder="Novo tamanho"
+        initialValue={row.size ?? ""}
+      />
+      {row.category === "extra" && (
+        <label className="form-label">
+          Preço do adicional (R$)
+          <input
+            name="price"
+            type="number"
+            min="0"
+            step="0.01"
+            defaultValue={(row.priceCents ?? 0) / 100}
+          />
+        </label>
+      )}
+      {row.category === "component" && (
+        <>
+          <label className="form-label">
+            Acréscimo ao adicionar ou trocar esta peça (R$)
+            <input
+              name="customPrice"
+              type="number"
+              min="0"
+              step="0.01"
+              defaultValue={(row.customPriceCents ?? 0) / 100}
+            />
+          </label>
+          <label className="form-label">
+            Estrutura exigida (opcional)
+            <select
+              name="requiresStructureId"
+              defaultValue={row.requiresStructureId ?? ""}
+            >
+              <option value="">Não exige estrutura</option>
+              {items
+                .filter(
+                  (item) => item.category === "structure" && item.available,
+                )
+                .map((item) => (
+                  <option key={item._id} value={item._id}>
+                    {item.name}
+                    {item.size ? ` · ${item.size}` : ""}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </>
+      )}
+      <label className="form-label">
+        Quantidade total em estoque
+        <input
+          name="totalQuantity"
+          type="number"
+          min="0"
+          defaultValue={row.totalQuantity}
+          required
+        />
+      </label>
+      <label className="admin-file">
+        Trocar foto (opcional)
+        <input
+          name="image"
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+        />
+      </label>
+      <div className="flex gap-3 inventory-inline-edit-actions">
+        <button disabled={busy}>Salvar alterações</button>
+        <button type="button" className="toggle" onClick={onCancel}>
+          Cancelar
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -1083,7 +1276,10 @@ export default function AdminWorkspace() {
               onSubmit={(event) => submit("item", event)}
             >
               <small className="inventory-form-guidance">
-                Cadastre uma linha por combinação real. Reutilize os nomes existentes no seletor e informe tema, cor, tamanho, estoque e foto específicos dessa combinação. A categoria agrupa produtos; o nome diferencia o tipo de produto.
+                Cadastre uma linha por combinação real. Reutilize os nomes
+                existentes no seletor e informe tema, cor, tamanho, estoque e
+                foto específicos dessa combinação. A categoria agrupa produtos;
+                o nome diferencia o tipo de produto.
               </small>
 
               <InventoryValueSelect
@@ -1106,17 +1302,39 @@ export default function AdminWorkspace() {
                 <option value="extra">Adicional para cliente</option>
               </select>
 
-              <InventoryValueSelect
-                items={data.items}
-                field="family"
-                label="Selecione a categoria *"
-                placeholder="Nova categoria (ex.: Balões)"
-                required
-              />
+              {newItemCategory === "structure" ? (
+                <>
+                  <input
+                    type="hidden"
+                    name="family"
+                    value="Estruturas internas"
+                  />
+                  <label className="form-label">
+                    Categoria
+                    <input value="Estruturas internas" readOnly />
+                  </label>
+                  <small className="inventory-form-guidance">
+                    Estruturas físicas são sempre classificadas como “Estruturas
+                    internas”.
+                  </small>
+                </>
+              ) : (
+                <InventoryValueSelect
+                  items={data.items}
+                  field="family"
+                  label="Selecione a categoria *"
+                  placeholder="Nova categoria (ex.: Balões)"
+                  required
+                />
+              )}
 
               {newItemCategory === "extra" && (
                 <small className="inventory-form-guidance">
-                  Para balões, use a categoria “Balões” e nomes diferentes como “Balão simples” e “Balão orgânico”. Cadastre cada cor como um item individual, com sua própria foto, preço e estoque. O mesmo padrão vale para painéis e cilindros: repita o nome e varie cor, tamanho e tema conforme a combinação real.
+                  Para balões, use a categoria “Balões” e nomes diferentes como
+                  “Balão simples” e “Balão orgânico”. Cadastre cada cor como um
+                  item individual, com sua própria foto, preço e estoque. O
+                  mesmo padrão vale para painéis e cilindros: repita o nome e
+                  varie cor, tamanho e tema conforme a combinação real.
                 </small>
               )}
 
@@ -1212,144 +1430,6 @@ export default function AdminWorkspace() {
               </button>
             </form>
           </details>
-          {editingItemId &&
-            (() => {
-              const row = data.items.find((item) => item._id === editingItemId);
-              if (!row) return null;
-              return (
-                <form
-                  key={row._id}
-                  className="admin-form admin-edit-form"
-                  onSubmit={(event) => void saveItemEdit(row._id, event)}
-                >
-                  <b>Editar: {row.name}</b>
-
-                  <small className="inventory-form-guidance">
-                    A edição preserva as referências deste item nos kits. Reutilize os nomes e atributos existentes para evitar duplicatas; cada combinação de tema, cor e tamanho deve ter seu próprio cadastro e foto.
-                  </small>
-
-                  <InventoryValueSelect
-                    items={data.items}
-                    field="name"
-                    label="Nome do produto *"
-                    placeholder="Nome do produto"
-                    initialValue={row.name ?? ""}
-                    required
-                  />
-
-                  <select name="category" defaultValue={row.category}>
-                    <option value="component">Peça de kit</option>
-                    <option value="structure">Estrutura interna</option>
-                    <option value="extra">Adicional</option>
-                  </select>
-
-                  <InventoryValueSelect
-                    items={data.items}
-                    field="family"
-                    label="Selecione a categoria *"
-                    placeholder="Nova categoria"
-                    initialValue={row.family ?? ""}
-                    required
-                  />
-
-                  <InventoryValueSelect
-                    items={data.items}
-                    field="theme"
-                    label="Temática (opcional)"
-                    placeholder="Nova temática"
-                    initialValue={row.theme ?? ""}
-                  />
-
-                  <InventoryValueSelect
-                    items={data.items}
-                    field="color"
-                    label="Cor (opcional)"
-                    placeholder="Nova cor"
-                    initialValue={row.color ?? ""}
-                  />
-
-                  <InventoryValueSelect
-                    items={data.items}
-                    field="size"
-                    label="Tamanho (opcional)"
-                    placeholder="Novo tamanho"
-                    initialValue={row.size ?? ""}
-                  />
-
-                  {row.category === "extra" && (
-                    <label className="form-label">
-                      Preço do adicional (R$)
-                      <input
-                        name="price"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        defaultValue={(row.priceCents ?? 0) / 100}
-                      />
-                    </label>
-                  )}
-
-                  {row.category === "component" && (
-                    <>
-                      <input
-                        name="customPrice"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        defaultValue={(row.customPriceCents ?? 0) / 100}
-                        placeholder="Acréscimo ao adicionar ou trocar esta peça (R$)"
-                      />
-
-                      <select
-                        name="requiresStructureId"
-                        defaultValue={row.requiresStructureId ?? ""}
-                      >
-                        <option value="">Não exige estrutura</option>
-                        {data.items
-                          .filter(
-                            (item) =>
-                              item.category === "structure" &&
-                              item.available,
-                          )
-                          .map((item) => (
-                            <option key={item._id} value={item._id}>
-                              {item.name}
-                              {item.size ? ` · ${item.size}` : ""}
-                            </option>
-                          ))}
-                      </select>
-                    </>
-                  )}
-
-                  <input
-                    name="totalQuantity"
-                    type="number"
-                    min="0"
-                    defaultValue={row.totalQuantity}
-                    required
-                  />
-
-                  <label className="admin-file">
-                    Trocar foto (opcional)
-                    <input
-                      name="image"
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp"
-                    />
-                  </label>
-
-                  <button disabled={busy}>Salvar alterações</button>
-
-                  <button
-                    type="button"
-                    className="toggle"
-                    onClick={() => setEditingItemId("")}
-                  >
-                    Cancelar
-                  </button>
-                </form>
-              );
-            })()}
           <div className="admin-inventory-grid">
             <details className="admin-inventory-group">
               <summary className="admin-subsection-title">
@@ -1375,52 +1455,68 @@ export default function AdminWorkspace() {
                   {data.items
                     .filter((row) => row.category === "structure")
                     .map((row) => (
-                      <div className="admin-list-row" key={row._id}>
-                        <span>
-                          <b>{row.name}</b>
-                          <small>
-                            {[row.family, row.color, row.size]
-                              .filter(Boolean)
-                              .join(" · ") ||
-                              "Estrutura sem classificações adicionais"}
-                          </small>
-                        </span>
-                        <label>
-                          Estoque{" "}
-                          <input
-                            type="number"
-                            min="0"
-                            defaultValue={row.totalQuantity}
-                            onBlur={(e) => {
-                              const quantity = Number(e.target.value);
-                              if (quantity !== row.totalQuantity)
-                                void update({
-                                  type: "item",
-                                  id: row._id,
-                                  totalQuantity: quantity,
-                                });
-                            }}
+                      <Fragment key={row._id}>
+                        <div className="admin-list-row">
+                          <span>
+                            <b>{row.name}</b>
+                            <small>
+                              {[row.family, row.color, row.size]
+                                .filter(Boolean)
+                                .join(" · ") ||
+                                "Estrutura sem classificações adicionais"}
+                            </small>
+                          </span>
+                          <label>
+                            Estoque{" "}
+                            <input
+                              key={`${row._id}-${row.totalQuantity}`}
+                              type="number"
+                              min="0"
+                              defaultValue={row.totalQuantity}
+                              onBlur={(e) => {
+                                const quantity = Number(e.target.value);
+                                if (quantity !== row.totalQuantity)
+                                  void update({
+                                    type: "item",
+                                    id: row._id,
+                                    totalQuantity: quantity,
+                                  });
+                              }}
+                            />
+                          </label>
+                          <button
+                            className="toggle"
+                            onClick={() => setEditingItemId(row._id)}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className={
+                              row.available ? "toggle active" : "toggle"
+                            }
+                            onClick={() =>
+                              void update({
+                                type: "item",
+                                id: row._id,
+                                available: !row.available,
+                              })
+                            }
+                          >
+                            {row.available ? "Ativa" : "Inativa"}
+                          </button>
+                        </div>
+                        {editingItemId === row._id && (
+                          <ItemEditForm
+                            row={row}
+                            items={data.items}
+                            busy={busy}
+                            onSubmit={(event) =>
+                              void saveItemEdit(row._id, event)
+                            }
+                            onCancel={() => setEditingItemId("")}
                           />
-                        </label>
-                        <button
-                          className="toggle"
-                          onClick={() => setEditingItemId(row._id)}
-                        >
-                          Editar
-                        </button>
-                        <button
-                          className={row.available ? "toggle active" : "toggle"}
-                          onClick={() =>
-                            void update({
-                              type: "item",
-                              id: row._id,
-                              available: !row.available,
-                            })
-                          }
-                        >
-                          {row.available ? "Ativa" : "Inativa"}
-                        </button>
-                      </div>
+                        )}
+                      </Fragment>
                     ))}
                 </div>
               )}
@@ -1482,80 +1578,94 @@ export default function AdminWorkspace() {
                           </summary>
                           <div className="admin-list">
                             {variants.map((row) => (
-                              <div className="admin-list-row" key={row._id}>
-                                {row.image && (
-                                  <Image
-                                    src={row.image}
-                                    alt={row.name}
-                                    width={42}
-                                    height={42}
-                                    className="admin-thumb"
+                              <Fragment key={row._id}>
+                                <div className="admin-list-row">
+                                  {row.image && (
+                                    <Image
+                                      src={row.image}
+                                      alt={row.name}
+                                      width={42}
+                                      height={42}
+                                      className="admin-thumb"
+                                    />
+                                  )}
+                                  <span>
+                                    <b>{row.name}</b>
+                                    <small>
+                                      {[row.theme, row.color, row.size]
+                                        .filter(Boolean)
+                                        .join(" · ") ||
+                                        "Sem cor ou tamanho informado"}
+                                      {row.requiresStructureId
+                                        ? " · exige estrutura"
+                                        : ""}
+                                    </small>
+                                  </span>
+                                  <label>
+                                    Estoque{" "}
+                                    <input
+                                      key={`${row._id}-${row.totalQuantity}`}
+                                      type="number"
+                                      min="0"
+                                      defaultValue={row.totalQuantity}
+                                      onBlur={(e) => {
+                                        const quantity = Number(e.target.value);
+                                        if (quantity !== row.totalQuantity)
+                                          void update({
+                                            type: "item",
+                                            id: row._id,
+                                            totalQuantity: quantity,
+                                          });
+                                      }}
+                                    />
+                                  </label>
+                                  <button
+                                    className="toggle"
+                                    onClick={() => setEditingItemId(row._id)}
+                                  >
+                                    Editar
+                                  </button>
+                                  <label className="admin-file admin-file-row">
+                                    Foto
+                                    <input
+                                      type="file"
+                                      accept="image/png,image/jpeg,image/webp"
+                                      onChange={(e) =>
+                                        void replaceImage(
+                                          "item",
+                                          row._id,
+                                          e.target.files?.[0],
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <button
+                                    className={
+                                      row.available ? "toggle active" : "toggle"
+                                    }
+                                    onClick={() =>
+                                      void update({
+                                        type: "item",
+                                        id: row._id,
+                                        available: !row.available,
+                                      })
+                                    }
+                                  >
+                                    {row.available ? "Ativa" : "Inativa"}
+                                  </button>
+                                </div>
+                                {editingItemId === row._id && (
+                                  <ItemEditForm
+                                    row={row}
+                                    items={data.items}
+                                    busy={busy}
+                                    onSubmit={(event) =>
+                                      void saveItemEdit(row._id, event)
+                                    }
+                                    onCancel={() => setEditingItemId("")}
                                   />
                                 )}
-                                <span>
-                                  <b>{row.name}</b>
-                                  <small>
-                                    {[row.theme, row.color, row.size]
-                                      .filter(Boolean)
-                                      .join(" · ") ||
-                                      "Sem cor ou tamanho informado"}
-                                    {row.requiresStructureId
-                                      ? " · exige estrutura"
-                                      : ""}
-                                  </small>
-                                </span>
-                                <label>
-                                  Estoque{" "}
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    defaultValue={row.totalQuantity}
-                                    onBlur={(e) => {
-                                      const quantity = Number(e.target.value);
-                                      if (quantity !== row.totalQuantity)
-                                        void update({
-                                          type: "item",
-                                          id: row._id,
-                                          totalQuantity: quantity,
-                                        });
-                                    }}
-                                  />
-                                </label>
-                                <button
-                                  className="toggle"
-                                  onClick={() => setEditingItemId(row._id)}
-                                >
-                                  Editar
-                                </button>
-                                <label className="admin-file admin-file-row">
-                                  Foto
-                                  <input
-                                    type="file"
-                                    accept="image/png,image/jpeg,image/webp"
-                                    onChange={(e) =>
-                                      void replaceImage(
-                                        "item",
-                                        row._id,
-                                        e.target.files?.[0],
-                                      )
-                                    }
-                                  />
-                                </label>
-                                <button
-                                  className={
-                                    row.available ? "toggle active" : "toggle"
-                                  }
-                                  onClick={() =>
-                                    void update({
-                                      type: "item",
-                                      id: row._id,
-                                      available: !row.available,
-                                    })
-                                  }
-                                >
-                                  {row.available ? "Ativa" : "Inativa"}
-                                </button>
-                              </div>
+                              </Fragment>
                             ))}
                           </div>
                         </details>
@@ -1608,56 +1718,70 @@ export default function AdminWorkspace() {
                           </summary>
                           <div className="admin-list">
                             {rows.map((row) => (
-                              <div className="admin-list-row" key={row._id}>
-                                <span>
-                                  <b>{row.name}</b>
+                              <Fragment key={row._id}>
+                                <div className="admin-list-row">
+                                  <span>
+                                    <b>{row.name}</b>
 
-                                  <small>
-                                    {row.family || "Sem categoria"} ·{" "}
-                                    {[row.theme, row.color, row.size]
-                                      .filter(Boolean)
-                                      .join(" · ") || "Sem variação"} ·{" "}
-                                    {fmt(row.priceCents)}
-                                  </small>
-                                </span>
-                                <label>
-                                  Estoque{" "}
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    defaultValue={row.totalQuantity}
-                                    onBlur={(e) => {
-                                      const quantity = Number(e.target.value);
-                                      if (quantity !== row.totalQuantity)
-                                        void update({
-                                          type: "item",
-                                          id: row._id,
-                                          totalQuantity: quantity,
-                                        });
-                                    }}
+                                    <small>
+                                      {row.family || "Sem categoria"} ·{" "}
+                                      {[row.theme, row.color, row.size]
+                                        .filter(Boolean)
+                                        .join(" · ") || "Sem variação"}{" "}
+                                      · {fmt(row.priceCents)}
+                                    </small>
+                                  </span>
+                                  <label>
+                                    Estoque{" "}
+                                    <input
+                                      key={`${row._id}-${row.totalQuantity}`}
+                                      type="number"
+                                      min="0"
+                                      defaultValue={row.totalQuantity}
+                                      onBlur={(e) => {
+                                        const quantity = Number(e.target.value);
+                                        if (quantity !== row.totalQuantity)
+                                          void update({
+                                            type: "item",
+                                            id: row._id,
+                                            totalQuantity: quantity,
+                                          });
+                                      }}
+                                    />
+                                  </label>
+                                  <button
+                                    className="toggle"
+                                    onClick={() => setEditingItemId(row._id)}
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    className={
+                                      row.available ? "toggle active" : "toggle"
+                                    }
+                                    onClick={() =>
+                                      void update({
+                                        type: "item",
+                                        id: row._id,
+                                        available: !row.available,
+                                      })
+                                    }
+                                  >
+                                    {row.available ? "Ativo" : "Inativo"}
+                                  </button>
+                                </div>
+                                {editingItemId === row._id && (
+                                  <ItemEditForm
+                                    row={row}
+                                    items={data.items}
+                                    busy={busy}
+                                    onSubmit={(event) =>
+                                      void saveItemEdit(row._id, event)
+                                    }
+                                    onCancel={() => setEditingItemId("")}
                                   />
-                                </label>
-                                <button
-                                  className="toggle"
-                                  onClick={() => setEditingItemId(row._id)}
-                                >
-                                  Editar
-                                </button>
-                                <button
-                                  className={
-                                    row.available ? "toggle active" : "toggle"
-                                  }
-                                  onClick={() =>
-                                    void update({
-                                      type: "item",
-                                      id: row._id,
-                                      available: !row.available,
-                                    })
-                                  }
-                                >
-                                  {row.available ? "Ativo" : "Inativo"}
-                                </button>
-                              </div>
+                                )}
+                              </Fragment>
                             ))}
                           </div>
                         </details>
@@ -1674,8 +1798,8 @@ export default function AdminWorkspace() {
               <div className="eyebrow">CATÁLOGO</div>
               <h2>Kits pegue e monte</h2>
               <p className="admin-section-help">
-                Cadastre e organize aqui os kits prontos. O cliente pode personalizar
-                as peças ao solicitar a reserva.
+                Cadastre e organize aqui os kits prontos. O cliente pode
+                personalizar as peças ao solicitar a reserva.
               </p>
             </div>
             <span className="admin-count-pill">{data.kits.length} kit(s)</span>
@@ -1826,8 +1950,9 @@ export default function AdminWorkspace() {
                   <div className="admin-kit-card-info">
                     <b>{row.name}</b>
                     <small>
-                      {fmt(row.priceCents)} por evento · Kit pronto, personalizável ·{" "}
-                      {row.inventory?.length ?? 0} item(ns) na composição
+                      {fmt(row.priceCents)} por evento · Kit pronto,
+                      personalizável · {row.inventory?.length ?? 0} item(ns) na
+                      composição
                     </small>
                   </div>
                   <div className="admin-kit-card-actions">

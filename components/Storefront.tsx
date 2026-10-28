@@ -21,7 +21,12 @@ import { FaInstagram } from "react-icons/fa";
 import type { StoreExtra, StoreKit, StorePiece } from "@/lib/storefront-data";
 
 type Kit = StoreKit;
-type StoreExtraDisplay = StoreExtra & { family?: string; theme?: string; color?: string; size?: string };
+type StoreExtraDisplay = StoreExtra & {
+  family?: string;
+  theme?: string;
+  color?: string;
+  size?: string;
+};
 type CustomPiece = { itemId: string; quantity: number };
 type SelectedExtra = { id: string; options: Record<string, string> };
 const money = (n: number) =>
@@ -68,18 +73,27 @@ function PieceCategorySelector({
   const attributes = attributeDefinitions
     .map((attribute) => ({
       ...attribute,
-      options: [...new Set(pieces.map((piece) => piece[attribute.key]).filter(Boolean))]
-        .sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
+      options: [
+        ...new Set(pieces.map((piece) => piece[attribute.key]).filter(Boolean)),
+      ].sort((a, b) =>
+        String(a).localeCompare(String(b), "pt-BR", { numeric: true }),
+      ),
     }))
     .filter((attribute) => attribute.options.length > 1);
-  const changeAttribute = (key: "name" | "theme" | "color" | "size", value: string) => {
+  const changeAttribute = (
+    key: "name" | "theme" | "color" | "size",
+    value: string,
+  ) => {
     const keys = ["name", "theme", "color", "size"] as const;
     const matches = pieces.filter((piece) => piece[key] === value);
-    const match = matches.find((piece) =>
-      keys.filter((other) => other !== key).every((other) =>
-        !selected[other] || piece[other] === selected[other],
-      ),
-    ) ?? matches[0];
+    const match =
+      matches.find((piece) =>
+        keys
+          .filter((other) => other !== key)
+          .every(
+            (other) => !selected[other] || piece[other] === selected[other],
+          ),
+      ) ?? matches[0];
     if (match) setSelectedId(match.id);
   };
   const addedQuantity =
@@ -92,10 +106,14 @@ function PieceCategorySelector({
     0,
     selected.stock - includedQuantity + removedQuantity,
   );
-  const displayName =
-    [selected.name, selected.theme, selected.color, selected.size]
-      .filter(Boolean)
-      .join(" · ");
+  const displayName = [
+    selected.name,
+    selected.theme,
+    selected.color,
+    selected.size,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <section className="piece-category-selector">
       <h4>{family}</h4>
@@ -714,9 +732,7 @@ export default function Storefront({
                       <h3>{kit.name}</h3>
                     </div>
                     <div className="product-price">
-                      <b>
-                        {money(kit.price)}
-                      </b>
+                      <b>{money(kit.price)}</b>
                       <small>por evento · personalize se quiser</small>
                     </div>
                   </div>
@@ -725,8 +741,7 @@ export default function Storefront({
                       <i /> Consulte disponibilidade
                     </span>
                     <button className="text-link" onClick={() => addKit(kit)}>
-                      Personalizar kit{" "}
-                      <ArrowRight size={15} />
+                      Personalizar kit <ArrowRight size={15} />
                     </button>
                   </div>
                 </article>
@@ -1085,16 +1100,16 @@ export default function Storefront({
                 <small>{cart.kit.theme}</small>
                 <b>{cart.kit.name}</b>
               </div>
-              <strong>
-                {money(cart.kit.price)}
-              </strong>
+              <strong>{money(cart.kit.price)}</strong>
             </div>
             {(cart.kit.customizable || cart.kit.allowCustomerEdits) && (
               <section className="custom-kit-builder">
                 <div className="extras-heading">
                   <b>Personalize este kit pronto</b>
                   <small>
-                    Mantenha as peças incluídas, retire unidades ou adicione peças. As estruturas necessárias são contabilizadas automaticamente no estoque.
+                    Mantenha as peças incluídas, retire unidades ou adicione
+                    peças. As estruturas necessárias são contabilizadas
+                    automaticamente no estoque.
                   </small>
                 </div>
                 {cart.kit.allowCustomerEdits &&
@@ -1223,6 +1238,14 @@ export default function Storefront({
                       ))}
                     </div>
                   )}{" "}
+                <div className="custom-kit-included custom-piece-add-heading">
+                  <b>Peças para adicionar ao kit</b>
+                  <small>
+                    Escolha uma peça abaixo e use o botão + para acrescentar
+                    unidades ao seu pedido. O que já está incluído aparece na
+                    seção anterior.
+                  </small>
+                </div>
                 <div className="custom-piece-category-list">
                   {customPieceGroups.length === 0 ? (
                     <small>
@@ -1348,10 +1371,11 @@ export default function Storefront({
               />
             </label>
             <div className="extras-heading">
-              <b>Deixe seu kit ainda mais especial</b>
+              <b>Adicionais para acrescentar ao pedido</b>
               <small>
-                Adicionais sujeitos à disponibilidade durante todo o período do
-                aluguel
+                Marque os cards dos itens que deseja adicionar. Os itens
+                selecionados ficam destacados com uma borda e um ✓. Sujeitos à
+                disponibilidade durante todo o período do aluguel.
               </small>
             </div>
 
@@ -1368,7 +1392,13 @@ export default function Storefront({
                   );
                   const productMap = new Map<
                     string,
-                    { key: string; name: string; theme?: string; size?: string; variants: StoreExtraDisplay[] }
+                    {
+                      key: string;
+                      name: string;
+                      theme?: string;
+                      size?: string;
+                      variants: StoreExtraDisplay[];
+                    }
                   >();
                   familyItems.forEach((item) => {
                     const key = `${item.name}|${item.theme || ""}|${item.size || ""}`;
@@ -1391,62 +1421,211 @@ export default function Storefront({
                     <section className="extra-category" key={family}>
                       <h3 className="extra-category-title">{family}</h3>
                       <p className="inventory-form-guidance">
-                        Escolha as cores desejadas. Cada cor pode ter sua própria foto e disponibilidade.
+                        Escolha as cores desejadas. Cada cor pode ter sua
+                        própria foto e disponibilidade.
                       </p>
 
-                      <div className="extra-category-items" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+                      <div
+                        className="extra-category-items"
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns:
+                            "repeat(auto-fit, minmax(250px, 1fr))",
+                          gap: 16,
+                        }}
+                      >
                         {products.map((product) => (
-                          <article key={product.key} className="extra-product-card" style={{ border: "1px solid #e8e2ec", borderRadius: 16, padding: 14, background: "#fff" }}>
+                          <article
+                            key={product.key}
+                            className="extra-product-card"
+                            style={{
+                              border: "1px solid #e8e2ec",
+                              borderRadius: 16,
+                              padding: 14,
+                              background: "#fff",
+                            }}
+                          >
                             <div style={{ marginBottom: 12 }}>
-                              <b style={{ display: "block", fontSize: 16 }}>{product.name}</b>
+                              <b style={{ display: "block", fontSize: 16 }}>
+                                {product.name}
+                              </b>
                               {(product.theme || product.size) && (
                                 <small style={{ color: "#716779" }}>
-                                  {[product.theme, product.size].filter(Boolean).join(" · ")}
+                                  {[product.theme, product.size]
+                                    .filter(Boolean)
+                                    .join(" · ")}
                                 </small>
                               )}
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 10 }}>
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns:
+                                  "repeat(auto-fill, minmax(100px, 1fr))",
+                                gap: 10,
+                              }}
+                            >
                               {product.variants.map((item) => {
-                                const selection = selected.find((entry) => entry.id === item.id);
+                                const selection = selected.find(
+                                  (entry) => entry.id === item.id,
+                                );
                                 const colorHex: Record<string, string> = {
-                                  branco: "#ffffff", preta: "#222222", preto: "#222222",
-                                  vermelho: "#e53935", azul: "#2878d0", "azul-claro": "#8ecae6",
-                                  rosa: "#f3a6c8", "rosa-claro": "#f8d7e8", amarelo: "#f5d547",
-                                  dourado: "#c9a227", prata: "#c0c0c0", verde: "#399764",
-                                  lilás: "#b8a1e3", lilas: "#b8a1e3", roxo: "#8654a8",
-                                  laranja: "#f28c28", nude: "#d8b49c", transparente: "#f5f5f5",
+                                  branco: "#ffffff",
+                                  preta: "#222222",
+                                  preto: "#222222",
+                                  vermelho: "#e53935",
+                                  azul: "#2878d0",
+                                  "azul-claro": "#8ecae6",
+                                  rosa: "#f3a6c8",
+                                  "rosa-claro": "#f8d7e8",
+                                  amarelo: "#f5d547",
+                                  dourado: "#c9a227",
+                                  prata: "#c0c0c0",
+                                  verde: "#399764",
+                                  lilás: "#b8a1e3",
+                                  lilas: "#b8a1e3",
+                                  roxo: "#8654a8",
+                                  laranja: "#f28c28",
+                                  nude: "#d8b49c",
+                                  transparente: "#f5f5f5",
                                 };
-                                const colorKey = String(item.color || "").trim().toLocaleLowerCase("pt-BR").replace(/\s+/g, "-");
+                                const colorKey = String(item.color || "")
+                                  .trim()
+                                  .toLocaleLowerCase("pt-BR")
+                                  .replace(/\s+/g, "-");
                                 const swatch = colorHex[colorKey] || "#e8e2ec";
                                 return (
-                                  <label key={item.id} style={{ display: "flex", flexDirection: "column", gap: 7, padding: 8, border: selection ? "2px solid #8b5cf6" : "1px solid #e8e2ec", borderRadius: 12, cursor: "pointer", background: selection ? "#faf5ff" : "#fff" }}>
+                                  <label
+                                    key={item.id}
+                                    style={{
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: 7,
+                                      padding: 8,
+                                      border: selection
+                                        ? "2px solid #8b5cf6"
+                                        : "1px solid #e8e2ec",
+                                      borderRadius: 12,
+                                      cursor: "pointer",
+                                      background: selection
+                                        ? "#faf5ff"
+                                        : "#fff",
+                                    }}
+                                  >
                                     <input
                                       type="checkbox"
                                       checked={Boolean(selection)}
-                                      style={{ position: "absolute", opacity: 0, pointerEvents: "none" }}
+                                      style={{
+                                        position: "absolute",
+                                        opacity: 0,
+                                        pointerEvents: "none",
+                                      }}
                                       onChange={(event) => {
                                         const next = event.target.checked
-                                          ? [...selected, { id: item.id, options: {} }]
-                                          : selected.filter((entry) => entry.id !== item.id);
+                                          ? [
+                                              ...selected,
+                                              { id: item.id, options: {} },
+                                            ]
+                                          : selected.filter(
+                                              (entry) => entry.id !== item.id,
+                                            );
                                         setSelected(next);
                                         setCart({ ...cart, extras: next });
                                         setAppliedCoupon(null);
                                         setCouponMessage("");
                                       }}
                                     />
-                                    <div style={{ position: "relative", aspectRatio: "1 / 1", overflow: "hidden", borderRadius: 8, background: "#f8f5fa" }}>
+                                    <div
+                                      style={{
+                                        position: "relative",
+                                        aspectRatio: "1 / 1",
+                                        overflow: "hidden",
+                                        borderRadius: 8,
+                                        background: "#f8f5fa",
+                                      }}
+                                    >
                                       {item.image ? (
-                                        <Image src={item.image} alt={`${item.name}${item.color ? ` - ${item.color}` : ""}`} fill sizes="(max-width: 600px) 45vw, 160px" style={{ objectFit: "cover" }} />
+                                        <Image
+                                          src={item.image}
+                                          alt={`${item.name}${item.color ? ` - ${item.color}` : ""}`}
+                                          fill
+                                          sizes="(max-width: 600px) 45vw, 160px"
+                                          style={{ objectFit: "cover" }}
+                                        />
                                       ) : (
-                                        <div style={{ height: "100%", display: "grid", placeItems: "center", color: "#716779", fontSize: 12 }}>Adicione uma foto</div>
+                                        <div
+                                          style={{
+                                            height: "100%",
+                                            display: "grid",
+                                            placeItems: "center",
+                                            color: "#716779",
+                                            fontSize: 12,
+                                          }}
+                                        >
+                                          Adicione uma foto
+                                        </div>
                                       )}
-                                      {selection && <span style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, display: "grid", placeItems: "center", borderRadius: "50%", background: "#8b5cf6", color: "white", fontSize: 13 }}>✓</span>}
+                                      {selection && (
+                                        <span
+                                          style={{
+                                            position: "absolute",
+                                            top: 6,
+                                            right: 6,
+                                            width: 22,
+                                            height: 22,
+                                            display: "grid",
+                                            placeItems: "center",
+                                            borderRadius: "50%",
+                                            background: "#8b5cf6",
+                                            color: "white",
+                                            fontSize: 13,
+                                          }}
+                                        >
+                                          ✓
+                                        </span>
+                                      )}
                                     </div>
-                                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600 }}>
-                                      <span aria-hidden="true" style={{ width: 13, height: 13, flexShrink: 0, borderRadius: "50%", border: "1px solid #d1c8d8", background: swatch }} />
+                                    <span
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        fontSize: 12,
+                                        fontWeight: 600,
+                                      }}
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        style={{
+                                          width: 13,
+                                          height: 13,
+                                          flexShrink: 0,
+                                          borderRadius: "50%",
+                                          border: "1px solid #d1c8d8",
+                                          background: swatch,
+                                        }}
+                                      />
                                       {item.color || "Padrão"}
                                     </span>
-                                    <b style={{ fontSize: 13 }}>{money(item.price)}</b>
+                                    <b style={{ fontSize: 13 }}>
+                                      {money(item.price)}
+                                    </b>
+                                    <span
+                                      style={{
+                                        display: "block",
+                                        marginTop: 4,
+                                        textAlign: "center",
+                                        fontSize: 12,
+                                        fontWeight: 700,
+                                        color: selection
+                                          ? "#6d28d9"
+                                          : "#716779",
+                                      }}
+                                    >
+                                      {selection
+                                        ? "✓ Adicionado · toque para remover"
+                                        : "+ Toque para adicionar"}
+                                    </span>
                                   </label>
                                 );
                               })}
@@ -1478,8 +1657,8 @@ export default function Storefront({
               <span>Valor total</span>
               <b>{money(promoTotal)}</b>
               <small>
-                Pedido mínimo: R$ 80,00. 50% na reserva: {money(promoTotal / 2)} <span>·</span> restante
-                na retirada
+                Pedido mínimo: R$ 80,00. 50% na reserva: {money(promoTotal / 2)}{" "}
+                <span>·</span> restante na retirada
               </small>
             </div>
             <p className="whatsapp-instruction">
