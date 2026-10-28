@@ -21,14 +21,27 @@ import { FaInstagram } from "react-icons/fa";
 import type { StoreExtra, StoreKit, StorePiece } from "@/lib/storefront-data";
 
 type Kit = StoreKit;
+type StoreExtraDisplay = StoreExtra & { family?: string; theme?: string; color?: string; size?: string };
 type CustomPiece = { itemId: string; quantity: number };
 type SelectedExtra = { id: string; options: Record<string, string> };
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const ownerWhatsapp = (process.env.NEXT_PUBLIC_STORE_WHATSAPP || "5592993339848").replace(/\D/g, "");
-const formatOrderDate = (value: string) => new Date(`${value}T12:00:00.000Z`).toLocaleDateString("pt-BR", { timeZone: "UTC" });
+const ownerWhatsapp = (
+  process.env.NEXT_PUBLIC_STORE_WHATSAPP || "5592993339848"
+).replace(/\D/g, "");
+const formatOrderDate = (value: string) =>
+  new Date(`${value}T12:00:00.000Z`).toLocaleDateString("pt-BR", {
+    timeZone: "UTC",
+  });
 
-function PieceCategorySelector({ family, pieces, added, included, removed, onQuantity }: {
+function PieceCategorySelector({
+  family,
+  pieces,
+  added,
+  included,
+  removed,
+  onQuantity,
+}: {
   family: string;
   pieces: StorePiece[];
   added: CustomPiece[];
@@ -38,33 +51,122 @@ function PieceCategorySelector({ family, pieces, added, included, removed, onQua
 }) {
   const [selectedId, setSelectedId] = useState(pieces[0]?.id ?? "");
   useEffect(() => {
-    if (!pieces.some(piece => piece.id === selectedId)) setSelectedId(pieces[0]?.id ?? "");
+    if (!pieces.some((piece) => piece.id === selectedId))
+      setSelectedId(pieces[0]?.id ?? "");
   }, [pieces, selectedId]);
-  const selected = pieces.find(piece => piece.id === selectedId) ?? pieces[0];
+  const selected = pieces.find((piece) => piece.id === selectedId) ?? pieces[0];
   if (!selected) return null;
-  const attributes = [
-    { key: "theme" as const, label: "Temática" },
+  const attributeDefinitions = [
+    { key: "name" as const, label: "Produto" },
+    { key: "theme" as const, label: "Tema" },
     { key: "color" as const, label: "Cor" },
     { key: "size" as const, label: "Tamanho" },
-  ].map(attribute => ({ ...attribute, options: [...new Set(pieces.map(piece => piece[attribute.key]).filter(Boolean))] }))
-    .filter(attribute => attribute.options.length > 1);
-  const changeAttribute = (key: "theme" | "color" | "size", value: string) => {
-    const matches = pieces.filter(piece => piece[key] === value);
-    const keys = ["theme", "color", "size"] as const;
-    const match = matches.find(piece => keys.filter(other => other !== key).every(other => piece[other] === selected[other])) ?? matches[0];
+  ];
+  // Cada atributo lista os valores cadastrados dentro desta categoria. Ao trocar
+  // um valor, a seleção procura preservar os demais; se a combinação não existir,
+  // muda para uma combinação válida e atualiza a foto/estoque/preço.
+  const attributes = attributeDefinitions
+    .map((attribute) => ({
+      ...attribute,
+      options: [...new Set(pieces.map((piece) => piece[attribute.key]).filter(Boolean))]
+        .sort((a, b) => String(a).localeCompare(String(b), "pt-BR", { numeric: true })),
+    }))
+    .filter((attribute) => attribute.options.length > 1);
+  const changeAttribute = (key: "name" | "theme" | "color" | "size", value: string) => {
+    const keys = ["name", "theme", "color", "size"] as const;
+    const matches = pieces.filter((piece) => piece[key] === value);
+    const match = matches.find((piece) =>
+      keys.filter((other) => other !== key).every((other) =>
+        !selected[other] || piece[other] === selected[other],
+      ),
+    ) ?? matches[0];
     if (match) setSelectedId(match.id);
   };
-  const addedQuantity = added.find(entry => entry.itemId === selected.id)?.quantity ?? 0;
-  const includedQuantity = included.find(piece => piece.id === selected.id)?.quantity ?? 0;
-  const removedQuantity = removed.find(entry => entry.itemId === selected.id)?.quantity ?? 0;
-  const remainingStock = Math.max(0, selected.stock - includedQuantity + removedQuantity);
-  const displayName = [selected.theme, selected.color, selected.size].filter(Boolean).join(" · ") || selected.name;
-  return <section className="piece-category-selector">
-    <h4>{family}</h4>
-    {attributes.length > 0 && <div className="piece-variant-selects">{attributes.map(attribute => <label key={attribute.key}>{attribute.label}<select value={selected[attribute.key]} onChange={event => changeAttribute(attribute.key, event.target.value)}>{attribute.options.map(option => <option value={option} key={option}>{option}</option>)}</select></label>)}</div>}
-    <div className="piece-variant-preview">{selected.image ? <Image src={selected.image} alt={`${family} — ${displayName}`} width={112} height={96} className="extra-photo"/> : <span className="custom-piece-placeholder">✳</span>}<span><b>{displayName}</b><small>{selected.name !== family ? selected.name : "Variação selecionada"}{includedQuantity ? ` · ${includedQuantity - removedQuantity} já incluída(s)` : ""}</small><small>{selected.price ? `+ ${money(selected.price)} por unidade` : "Sem acréscimo"}</small></span></div>
-    <div className="custom-piece-quantity"><button type="button" aria-label={`Remover uma unidade de ${displayName}`} disabled={!addedQuantity} onClick={() => onQuantity(selected, addedQuantity - 1)}>−</button><b>{addedQuantity}</b><button type="button" aria-label={`Adicionar uma unidade de ${displayName}`} disabled={addedQuantity >= remainingStock} onClick={() => onQuantity(selected, addedQuantity + 1)}>+</button></div>
-  </section>;
+  const addedQuantity =
+    added.find((entry) => entry.itemId === selected.id)?.quantity ?? 0;
+  const includedQuantity =
+    included.find((piece) => piece.id === selected.id)?.quantity ?? 0;
+  const removedQuantity =
+    removed.find((entry) => entry.itemId === selected.id)?.quantity ?? 0;
+  const remainingStock = Math.max(
+    0,
+    selected.stock - includedQuantity + removedQuantity,
+  );
+  const displayName =
+    [selected.name, selected.theme, selected.color, selected.size]
+      .filter(Boolean)
+      .join(" · ");
+  return (
+    <section className="piece-category-selector">
+      <h4>{family}</h4>
+      {attributes.length > 0 && (
+        <div className="piece-variant-selects">
+          {attributes.map((attribute) => (
+            <label key={attribute.key}>
+              {attribute.label}
+              <select
+                value={selected[attribute.key]}
+                onChange={(event) =>
+                  changeAttribute(attribute.key, event.target.value)
+                }
+              >
+                {attribute.options.map((option) => (
+                  <option value={option} key={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+        </div>
+      )}
+      <div className="piece-variant-preview">
+        {selected.image ? (
+          <Image
+            src={selected.image}
+            alt={`${family} — ${displayName}`}
+            width={112}
+            height={96}
+            className="extra-photo"
+          />
+        ) : (
+          <span className="custom-piece-placeholder">✳</span>
+        )}
+        <span>
+          <b>{displayName}</b>
+          <small>
+            {includedQuantity
+              ? ` · ${includedQuantity - removedQuantity} já incluída(s)`
+              : ""}
+          </small>
+          <small>
+            {selected.price
+              ? `+ ${money(selected.price)} por unidade`
+              : "Sem acréscimo"}
+          </small>
+        </span>
+      </div>
+      <div className="custom-piece-quantity">
+        <button
+          type="button"
+          aria-label={`Remover uma unidade de ${displayName}`}
+          disabled={!addedQuantity}
+          onClick={() => onQuantity(selected, addedQuantity - 1)}
+        >
+          −
+        </button>
+        <b>{addedQuantity}</b>
+        <button
+          type="button"
+          aria-label={`Adicionar uma unidade de ${displayName}`}
+          disabled={addedQuantity >= remainingStock}
+          onClick={() => onQuantity(selected, addedQuantity + 1)}
+        >
+          +
+        </button>
+      </div>
+    </section>
+  );
 }
 
 export default function Storefront({
@@ -74,7 +176,7 @@ export default function Storefront({
   promotions = [],
 }: {
   kits: StoreKit[];
-  extras: StoreExtra[];
+  extras: StoreExtraDisplay[];
   connected: boolean;
   promotions?: Array<{
     title: string;
@@ -83,7 +185,12 @@ export default function Storefront({
     href: string;
   }>;
 }) {
-  const [cart, setCart] = useState<{ kit: Kit; extras: SelectedExtra[]; customInventory: CustomPiece[]; removedInventory: CustomPiece[] } | null>(null);
+  const [cart, setCart] = useState<{
+    kit: Kit;
+    extras: SelectedExtra[];
+    customInventory: CustomPiece[];
+    removedInventory: CustomPiece[];
+  } | null>(null);
   const [selected, setSelected] = useState<SelectedExtra[]>([]);
   const [customInventory, setCustomInventory] = useState<CustomPiece[]>([]);
   const [favoriteIds, setFavoriteIds] = useState<string[]>([]);
@@ -126,27 +233,51 @@ export default function Storefront({
     if (favoritesLoaded)
       localStorage.setItem("prilulu-favorites", JSON.stringify(favoriteIds));
   }, [favoriteIds, favoritesLoaded]);
-  const total = useMemo(
+  const subtotal = useMemo(
     () =>
       cart
-        ? (cart.kit.customizable ? (cart.kit.customBasePrice ?? cart.kit.price) : cart.kit.price) +
-          (cart.kit.customizable || cart.kit.allowCustomerEdits ? cart.customInventory.reduce((sum, part) => sum + (cart.kit.pieces?.find(piece => piece.id === part.itemId)?.price ?? 0) * part.quantity, 0) : 0) +
+        ? cart.kit.price +
+          (cart.kit.customizable || cart.kit.allowCustomerEdits
+            ? cart.customInventory.reduce(
+                (sum, part) =>
+                  sum +
+                  (cart.kit.pieces?.find((piece) => piece.id === part.itemId)
+                    ?.price ?? 0) *
+                    part.quantity,
+                0,
+              )
+            : 0) +
           cart.extras.reduce((sum, selection) => {
             const extra = extras.find((entry) => entry.id === selection.id);
             if (!extra) return sum;
-            const optionsTotal = extra.optionGroups.reduce((groupTotal, group) => {
-              const option = group.options.find((entry) => entry.id === selection.options[group.id]);
-              return groupTotal + (option?.priceDelta ?? 0);
-            }, 0);
-            return sum + extra.price + optionsTotal;
+            return sum + extra.price;
           }, 0)
         : 0,
-    [cart],
+    [cart, extras],
   );
+  // Todo pedido tem valor mínimo de R$ 80.
+  const total = cart ? Math.max(80, subtotal) : 0;
   const promoTotal = appliedCoupon ? appliedCoupon.totalCents / 100 : total;
   const availabilityKit = kits.find((kit) => kit.id === availabilityKitId);
-  const customPieceGroups = [...new Set((cart?.kit.pieces ?? []).map(piece=>piece.family || "Outras peças"))].sort((a,b)=>a.localeCompare(b,"pt-BR")).map(family=>({ family, pieces: (cart?.kit.pieces ?? []).filter(piece=>(piece.family || "Outras peças")===family) }));
-  const includedPieceFamilies = [...new Set((cart?.kit.includedPieces ?? []).map(piece=>piece.family || "Outras peças"))];
+  const customPieceGroups = [
+    ...new Set(
+      (cart?.kit.pieces ?? []).map((piece) => piece.family || "Outras peças"),
+    ),
+  ]
+    .sort((a, b) => a.localeCompare(b, "pt-BR"))
+    .map((family) => ({
+      family,
+      pieces: (cart?.kit.pieces ?? []).filter(
+        (piece) => (piece.family || "Outras peças") === family,
+      ),
+    }));
+  const includedPieceFamilies = [
+    ...new Set(
+      (cart?.kit.includedPieces ?? []).map(
+        (piece) => piece.family || "Outras peças",
+      ),
+    ),
+  ];
   const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60_000)
     .toISOString()
     .slice(0, 10);
@@ -241,20 +372,17 @@ export default function Storefront({
       setNotice("Escolha pelo menos uma peça para montar seu kit.");
       return;
     }
-    for (const selection of selected) {
-      const extra = extras.find((item) => item.id === selection.id);
-      const missingGroup = extra?.optionGroups.find((group) => group.required && !selection.options[group.id]);
-      if (extra && missingGroup) {
-        setNotice(`Escolha uma opção para “${missingGroup.name}” no adicional ${extra.name}.`);
-        return;
-      }
-    }
     const whatsappWindow = window.open("about:blank", "_blank");
     try {
       const response = await fetch("/api/availability", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kitId: cart?.kit.id, date, customInventory: cart?.customInventory ?? [], removedInventory: cart?.removedInventory ?? [] }),
+        body: JSON.stringify({
+          kitId: cart?.kit.id,
+          date,
+          customInventory: cart?.customInventory ?? [],
+          removedInventory: cart?.removedInventory ?? [],
+        }),
       });
       if (response.ok) {
         const result = await response.json();
@@ -288,34 +416,59 @@ export default function Storefront({
             `Data da festa: ${formatOrderDate(date)}`,
             `Devolução prevista: ${formatOrderDate(bookingResult.returnDate)}`,
           ];
-          const includedLines = (cart.kit.includedPieces ?? []).map(piece => {
-            const removedQuantity = cart.removedInventory.find(entry => entry.itemId === piece.id)?.quantity ?? 0;
-            const quantity = Math.max(0, (piece.quantity ?? 1) - removedQuantity);
-            const variant = [piece.theme, piece.color, piece.size].filter(Boolean).join(" · ");
-            return quantity ? `• ${piece.family}: ${variant || piece.name} × ${quantity}` : "";
-          }).filter(Boolean);
-          const addedLines = cart.customInventory.map(part => {
-            const piece = cart.kit.pieces?.find(entry => entry.id === part.itemId);
-            if (!piece) return "";
-            const variant = [piece.theme, piece.color, piece.size].filter(Boolean).join(" · ");
-            return `• ${piece.family}: ${variant || piece.name} × ${part.quantity}${piece.price ? ` (+ ${money(piece.price * part.quantity)})` : ""}`;
-          }).filter(Boolean);
-          const removedLines = cart.removedInventory.map(part => {
-            const piece = cart.kit.includedPieces?.find(entry => entry.id === part.itemId);
-            return piece ? `• ${piece.family}: ${[piece.theme, piece.color, piece.size].filter(Boolean).join(" · ") || piece.name} × ${part.quantity} (retirada)` : "";
-          }).filter(Boolean);
-          const extraLines = selected.map(selection => {
-            const extra = extras.find(entry => entry.id === selection.id);
-            if (!extra) return "";
-            const choices = extra.optionGroups.map(group => {
-              const option = group.options.find(entry => entry.id === selection.options[group.id]);
-              return option ? `${group.name}: ${option.name}` : "";
-            }).filter(Boolean);
-            return `• ${extra.name}${choices.length ? ` — ${choices.join(", ")}` : ""}`;
-          }).filter(Boolean);
-          if (includedLines.length) lines.push("Peças incluídas no kit:", ...includedLines);
-          if (addedLines.length) lines.push("Peças adicionadas:", ...addedLines);
-          if (removedLines.length) lines.push("Peças retiradas do kit:", ...removedLines);
+          const includedLines = (cart.kit.includedPieces ?? [])
+            .map((piece) => {
+              const removedQuantity =
+                cart.removedInventory.find((entry) => entry.itemId === piece.id)
+                  ?.quantity ?? 0;
+              const quantity = Math.max(
+                0,
+                (piece.quantity ?? 1) - removedQuantity,
+              );
+              const variant = [piece.theme, piece.color, piece.size]
+                .filter(Boolean)
+                .join(" · ");
+              return quantity
+                ? `• ${piece.family}: ${variant || piece.name} × ${quantity}`
+                : "";
+            })
+            .filter(Boolean);
+          const addedLines = cart.customInventory
+            .map((part) => {
+              const piece = cart.kit.pieces?.find(
+                (entry) => entry.id === part.itemId,
+              );
+              if (!piece) return "";
+              const variant = [piece.theme, piece.color, piece.size]
+                .filter(Boolean)
+                .join(" · ");
+              return `• ${piece.family}: ${variant || piece.name} × ${part.quantity}${piece.price ? ` (+ ${money(piece.price * part.quantity)})` : ""}`;
+            })
+            .filter(Boolean);
+          const removedLines = cart.removedInventory
+            .map((part) => {
+              const piece = cart.kit.includedPieces?.find(
+                (entry) => entry.id === part.itemId,
+              );
+              return piece
+                ? `• ${piece.family}: ${[piece.theme, piece.color, piece.size].filter(Boolean).join(" · ") || piece.name} × ${part.quantity} (retirada)`
+                : "";
+            })
+            .filter(Boolean);
+          const extraLines = selected
+            .map((selection) => {
+              const extra = extras.find((entry) => entry.id === selection.id);
+              return extra
+                ? `• ${extra.family || "Adicionais"}: ${extra.name} — ${money(extra.price)}`
+                : "";
+            })
+            .filter(Boolean);
+          if (includedLines.length)
+            lines.push("Peças incluídas no kit:", ...includedLines);
+          if (addedLines.length)
+            lines.push("Peças adicionadas:", ...addedLines);
+          if (removedLines.length)
+            lines.push("Peças retiradas do kit:", ...removedLines);
           if (extraLines.length) lines.push("Adicionais:", ...extraLines);
           if (appliedCoupon) lines.push(`Cupom: ${appliedCoupon.code}`);
           lines.push(
@@ -561,8 +714,10 @@ export default function Storefront({
                       <h3>{kit.name}</h3>
                     </div>
                     <div className="product-price">
-                      <b>{money(kit.customizable ? (kit.customBasePrice ?? kit.price) : kit.price)}</b>
-                      <small>{kit.customizable ? "preço-base · monte do seu jeito" : kit.allowCustomerEdits ? "por evento · personalize" : "por evento"}</small>
+                      <b>
+                        {money(kit.price)}
+                      </b>
+                      <small>por evento · personalize se quiser</small>
                     </div>
                   </div>
                   <div className="product-foot">
@@ -570,7 +725,8 @@ export default function Storefront({
                       <i /> Consulte disponibilidade
                     </span>
                     <button className="text-link" onClick={() => addKit(kit)}>
-                      {kit.customizable ? "Montar meu kit" : kit.allowCustomerEdits ? "Personalizar kit" : "Ver kit"} <ArrowRight size={15} />
+                      Personalizar kit{" "}
+                      <ArrowRight size={15} />
                     </button>
                   </div>
                 </article>
@@ -659,7 +815,12 @@ export default function Storefront({
                       className="text-link"
                       type="button"
                       onClick={() => {
-                        setCart({ kit: availabilityKit, extras: [], customInventory: [], removedInventory: [] });
+                        setCart({
+                          kit: availabilityKit,
+                          extras: [],
+                          customInventory: [],
+                          removedInventory: [],
+                        });
                         setSelected([]);
                         setCustomInventory([]);
                         setDate(availabilityDate);
@@ -924,13 +1085,227 @@ export default function Storefront({
                 <small>{cart.kit.theme}</small>
                 <b>{cart.kit.name}</b>
               </div>
-              <strong>{money(cart.kit.customizable ? (cart.kit.customBasePrice ?? cart.kit.price) : cart.kit.price)}</strong>
+              <strong>
+                {money(cart.kit.price)}
+              </strong>
             </div>
-                        {(cart.kit.customizable || cart.kit.allowCustomerEdits) && <section className="custom-kit-builder">
-              <div className="extras-heading"><b>{cart.kit.customizable ? "Monte seu kit" : "Personalize este kit pronto"}</b><small>{cart.kit.customizable ? "Escolha as peças decorativas. As estruturas de suporte já estão incluídas e ficam ocultas." : "Mantenha as peças incluídas, troque as opções disponíveis ou adicione itens extras. A loja controla cada item por estoque."}</small></div>
-              {cart.kit.allowCustomerEdits && (cart.kit.includedPieces ?? []).length > 0 && <div className="custom-kit-included"><b>Peças que já vêm neste kit</b><small>Retirar uma peça devolve essa unidade ao estoque da data. Estruturas internas não podem ser removidas.</small>{includedPieceFamilies.map(family=><section className="variant-family" key={family}><b className="variant-family-title">{family}</b>{cart.kit.includedPieces!.filter(piece=>(piece.family||"Outras peças")===family).map(piece=>{const included=piece.quantity??1;const removed=cart.removedInventory.find(entry=>entry.itemId===piece.id)?.quantity??0;const retained=included-removed;return <article className="custom-kit-included-row" key={piece.id}><span>{piece.image?<Image src={piece.image} alt="" width={44} height={44} className="extra-photo"/>:<span className="custom-piece-placeholder small">✳</span>}<span><b>{[piece.theme,piece.color,piece.size].filter(Boolean).join(" · ")||piece.name}</b><small>{retained} de {included} unidade(s) incluída(s)</small></span></span><span className="custom-piece-quantity"><button type="button" aria-label={`Retirar uma unidade de ${piece.name}`} disabled={removed>=included} onClick={()=>{const next=removed<included?(removed?cart.removedInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity+1}:entry):[...cart.removedInventory,{itemId:piece.id,quantity:1}]):cart.removedInventory;setCart({...cart,removedInventory:next});setAppliedCoupon(null);setCouponMessage("");}}>−</button><button type="button" aria-label={`Manter uma unidade de ${piece.name}`} disabled={!removed} onClick={()=>{const next=cart.removedInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity:entry.quantity-1}:entry).filter(entry=>entry.quantity>0);setCart({...cart,removedInventory:next});setAppliedCoupon(null);setCouponMessage("");}}>+</button></span></article>;})}</section>)}</div>}              <div className="custom-piece-category-list">{customPieceGroups.length===0?<small>Não há peças cadastradas para personalizar este kit.</small>:customPieceGroups.map(group=><PieceCategorySelector key={group.family} family={group.family} pieces={group.pieces} added={cart.customInventory} included={cart.kit.includedPieces??[]} removed={cart.removedInventory} onQuantity={(piece,quantity)=>{const exists=cart.customInventory.some(entry=>entry.itemId===piece.id);const next=quantity===0?cart.customInventory.filter(entry=>entry.itemId!==piece.id):exists?cart.customInventory.map(entry=>entry.itemId===piece.id?{...entry,quantity}:entry):[...cart.customInventory,{itemId:piece.id,quantity}];setCustomInventory(next);setCart({...cart,customInventory:next});setAppliedCoupon(null);setCouponMessage("");}}/> )}</div>
-              {(cart.customInventory.length>0 || cart.removedInventory.length>0) && <div className="custom-kit-selection-summary"><b>{cart.customInventory.reduce((sum,part)=>sum+part.quantity,0)} peça(s) adicionada(s) · {cart.removedInventory.reduce((sum,part)=>sum+part.quantity,0)} retirada(s)</b><span>{[...cart.customInventory.map(part=>{const piece=cart.kit.pieces?.find(item=>item.id===part.itemId);return piece?`+ ${piece.name} × ${part.quantity}`:""}),...cart.removedInventory.map(part=>{const piece=cart.kit.includedPieces?.find(item=>item.id===part.itemId);return piece?`− ${piece.name} × ${part.quantity}`:""})].filter(Boolean).join(" · ")}</span></div>}
-            </section>}
+            {(cart.kit.customizable || cart.kit.allowCustomerEdits) && (
+              <section className="custom-kit-builder">
+                <div className="extras-heading">
+                  <b>Personalize este kit pronto</b>
+                  <small>
+                    Mantenha as peças incluídas, retire unidades ou adicione peças. As estruturas necessárias são contabilizadas automaticamente no estoque.
+                  </small>
+                </div>
+                {cart.kit.allowCustomerEdits &&
+                  (cart.kit.includedPieces ?? []).length > 0 && (
+                    <div className="custom-kit-included">
+                      <b>Peças que já vêm neste kit</b>
+                      <small>
+                        Retirar uma peça devolve essa unidade ao estoque da
+                        data. Estruturas internas não podem ser removidas.
+                      </small>
+                      {includedPieceFamilies.map((family) => (
+                        <section className="variant-family" key={family}>
+                          <b className="variant-family-title">{family}</b>
+                          {cart.kit
+                            .includedPieces!.filter(
+                              (piece) =>
+                                (piece.family || "Outras peças") === family,
+                            )
+                            .map((piece) => {
+                              const included = piece.quantity ?? 1;
+                              const removed =
+                                cart.removedInventory.find(
+                                  (entry) => entry.itemId === piece.id,
+                                )?.quantity ?? 0;
+                              const retained = included - removed;
+                              return (
+                                <article
+                                  className="custom-kit-included-row"
+                                  key={piece.id}
+                                >
+                                  <span>
+                                    {piece.image ? (
+                                      <Image
+                                        src={piece.image}
+                                        alt=""
+                                        width={44}
+                                        height={44}
+                                        className="extra-photo"
+                                      />
+                                    ) : (
+                                      <span className="custom-piece-placeholder small">
+                                        ✳
+                                      </span>
+                                    )}
+                                    <span>
+                                      <b>
+                                        {[piece.theme, piece.color, piece.size]
+                                          .filter(Boolean)
+                                          .join(" · ") || piece.name}
+                                      </b>
+                                      <small>
+                                        {retained} de {included} unidade(s)
+                                        incluída(s)
+                                      </small>
+                                    </span>
+                                  </span>
+                                  <span className="custom-piece-quantity">
+                                    <button
+                                      type="button"
+                                      aria-label={`Retirar uma unidade de ${piece.name}`}
+                                      disabled={removed >= included}
+                                      onClick={() => {
+                                        const next =
+                                          removed < included
+                                            ? removed
+                                              ? cart.removedInventory.map(
+                                                  (entry) =>
+                                                    entry.itemId === piece.id
+                                                      ? {
+                                                          ...entry,
+                                                          quantity:
+                                                            entry.quantity + 1,
+                                                        }
+                                                      : entry,
+                                                )
+                                              : [
+                                                  ...cart.removedInventory,
+                                                  {
+                                                    itemId: piece.id,
+                                                    quantity: 1,
+                                                  },
+                                                ]
+                                            : cart.removedInventory;
+                                        setCart({
+                                          ...cart,
+                                          removedInventory: next,
+                                        });
+                                        setAppliedCoupon(null);
+                                        setCouponMessage("");
+                                      }}
+                                    >
+                                      −
+                                    </button>
+                                    <button
+                                      type="button"
+                                      aria-label={`Manter uma unidade de ${piece.name}`}
+                                      disabled={!removed}
+                                      onClick={() => {
+                                        const next = cart.removedInventory
+                                          .map((entry) =>
+                                            entry.itemId === piece.id
+                                              ? {
+                                                  ...entry,
+                                                  quantity: entry.quantity - 1,
+                                                }
+                                              : entry,
+                                          )
+                                          .filter(
+                                            (entry) => entry.quantity > 0,
+                                          );
+                                        setCart({
+                                          ...cart,
+                                          removedInventory: next,
+                                        });
+                                        setAppliedCoupon(null);
+                                        setCouponMessage("");
+                                      }}
+                                    >
+                                      +
+                                    </button>
+                                  </span>
+                                </article>
+                              );
+                            })}
+                        </section>
+                      ))}
+                    </div>
+                  )}{" "}
+                <div className="custom-piece-category-list">
+                  {customPieceGroups.length === 0 ? (
+                    <small>
+                      Não há peças cadastradas para personalizar este kit.
+                    </small>
+                  ) : (
+                    customPieceGroups.map((group) => (
+                      <PieceCategorySelector
+                        key={group.family}
+                        family={group.family}
+                        pieces={group.pieces}
+                        added={cart.customInventory}
+                        included={cart.kit.includedPieces ?? []}
+                        removed={cart.removedInventory}
+                        onQuantity={(piece, quantity) => {
+                          const exists = cart.customInventory.some(
+                            (entry) => entry.itemId === piece.id,
+                          );
+                          const next =
+                            quantity === 0
+                              ? cart.customInventory.filter(
+                                  (entry) => entry.itemId !== piece.id,
+                                )
+                              : exists
+                                ? cart.customInventory.map((entry) =>
+                                    entry.itemId === piece.id
+                                      ? { ...entry, quantity }
+                                      : entry,
+                                  )
+                                : [
+                                    ...cart.customInventory,
+                                    { itemId: piece.id, quantity },
+                                  ];
+                          setCustomInventory(next);
+                          setCart({ ...cart, customInventory: next });
+                          setAppliedCoupon(null);
+                          setCouponMessage("");
+                        }}
+                      />
+                    ))
+                  )}
+                </div>
+                {(cart.customInventory.length > 0 ||
+                  cart.removedInventory.length > 0) && (
+                  <div className="custom-kit-selection-summary">
+                    <b>
+                      {cart.customInventory.reduce(
+                        (sum, part) => sum + part.quantity,
+                        0,
+                      )}{" "}
+                      peça(s) adicionada(s) ·{" "}
+                      {cart.removedInventory.reduce(
+                        (sum, part) => sum + part.quantity,
+                        0,
+                      )}{" "}
+                      retirada(s)
+                    </b>
+                    <span>
+                      {[
+                        ...cart.customInventory.map((part) => {
+                          const piece = cart.kit.pieces?.find(
+                            (item) => item.id === part.itemId,
+                          );
+                          return piece
+                            ? `+ ${piece.name} × ${part.quantity}`
+                            : "";
+                        }),
+                        ...cart.removedInventory.map((part) => {
+                          const piece = cart.kit.includedPieces?.find(
+                            (item) => item.id === part.itemId,
+                          );
+                          return piece
+                            ? `− ${piece.name} × ${part.quantity}`
+                            : "";
+                        }),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </div>
+                )}
+              </section>
+            )}
             <label className="form-label">
               Seu nome
               <input
@@ -979,34 +1354,111 @@ export default function Storefront({
                 aluguel
               </small>
             </div>
+
             <div className="extras-list">
-              {extras.map((item) => {
-                const selection = selected.find((entry) => entry.id === item.id);
-                const chosenOptions = item.optionGroups.map(group => group.options.find(option => option.id === selection?.options[group.id])).filter(Boolean);
-                const optionDelta = chosenOptions.reduce((sum, option) => sum + (option?.priceDelta ?? 0), 0);
-                const preview = [...chosenOptions].reverse().find(option => option?.image)?.image ?? item.image;
-                return <div key={item.id} className={selection ? "extra-card selected" : "extra-card"}>
-                  <label className="extra-row">
-                    <input type="checkbox" checked={Boolean(selection)} onChange={(event) => {
-                      const next = event.target.checked
-                        ? [...selected, { id: item.id, options: Object.fromEntries(item.optionGroups.filter(group=>group.required).map(group=>[group.id,group.options.find(option=>option.stockQuantity===null||option.stockQuantity>0)?.id]).filter(([,optionId])=>Boolean(optionId))) }]
-                        : selected.filter(entry => entry.id !== item.id);
-                      setSelected(next); setCart({ ...cart, extras: next }); setAppliedCoupon(null); setCouponMessage("");
-                    }}/>
-                    {(preview || item.image) && <Image src={preview || item.image!} alt={selection ? "Prévia de " + item.name : ""} width={46} height={46} className="extra-photo"/>}
-                    <span>{item.name}</span>
-                    <b>+ {money(item.price + optionDelta)}</b>
-                  </label>
-                  {selection && item.optionGroups.length > 0 && <div className="extra-choice-panel">
-                    {item.optionGroups.map(group => {
-                      const chosen = group.options.find(option=>option.id===selection.options[group.id]);
-                      return <label className="extra-choice" key={group.id}><span>{group.name}{group.required ? " *" : ""}</span><select required={group.required} value={selection.options[group.id] ?? ""} onChange={event=>{const next=selected.map(entry=>entry.id===item.id?{...entry,options:{...entry.options,[group.id]:event.target.value}}:entry);setSelected(next);setCart({...cart,extras:next});setAppliedCoupon(null);setCouponMessage("");}}><option value="">Selecione</option>{group.options.map(option=><option key={option.id} value={option.id} disabled={option.stockQuantity===0}>{option.name}{option.priceDelta!==0?" ("+(option.priceDelta>0?"+ ":"− ")+money(Math.abs(option.priceDelta))+")":""}{option.stockQuantity===0?" — indisponível":""}</option>)}</select>{chosen?.image&&<small>Prévia: {chosen.name}</small>}</label>;
-                    })}
-                    {preview&&<div className="extra-preview"><Image src={preview} alt={"Prévia da personalização: "+item.name} width={120} height={90}/><span>Prévia da combinação selecionada</span></div>}
-                  </div>}
-                </div>;
-              })}
+              {[
+                ...new Set(
+                  extras.map((item) => item.family || "Outros adicionais"),
+                ),
+              ]
+                .sort((a, b) => a.localeCompare(b, "pt-BR"))
+                .map((family) => {
+                  const familyItems = extras.filter(
+                    (item) => (item.family || "Outros adicionais") === family,
+                  );
+                  const productMap = new Map<
+                    string,
+                    { key: string; name: string; theme?: string; size?: string; variants: StoreExtraDisplay[] }
+                  >();
+                  familyItems.forEach((item) => {
+                    const key = `${item.name}|${item.theme || ""}|${item.size || ""}`;
+                    const existing = productMap.get(key);
+                    if (existing) {
+                      existing.variants.push(item);
+                    } else {
+                      productMap.set(key, {
+                        key,
+                        name: item.name,
+                        theme: item.theme,
+                        size: item.size,
+                        variants: [item],
+                      });
+                    }
+                  });
+                  const products = [...productMap.values()];
+
+                  return (
+                    <section className="extra-category" key={family}>
+                      <h3 className="extra-category-title">{family}</h3>
+                      <p className="inventory-form-guidance">
+                        Escolha as cores desejadas. Cada cor pode ter sua própria foto e disponibilidade.
+                      </p>
+
+                      <div className="extra-category-items" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 16 }}>
+                        {products.map((product) => (
+                          <article key={product.key} className="extra-product-card" style={{ border: "1px solid #e8e2ec", borderRadius: 16, padding: 14, background: "#fff" }}>
+                            <div style={{ marginBottom: 12 }}>
+                              <b style={{ display: "block", fontSize: 16 }}>{product.name}</b>
+                              {(product.theme || product.size) && (
+                                <small style={{ color: "#716779" }}>
+                                  {[product.theme, product.size].filter(Boolean).join(" · ")}
+                                </small>
+                              )}
+                            </div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 10 }}>
+                              {product.variants.map((item) => {
+                                const selection = selected.find((entry) => entry.id === item.id);
+                                const colorHex: Record<string, string> = {
+                                  branco: "#ffffff", preta: "#222222", preto: "#222222",
+                                  vermelho: "#e53935", azul: "#2878d0", "azul-claro": "#8ecae6",
+                                  rosa: "#f3a6c8", "rosa-claro": "#f8d7e8", amarelo: "#f5d547",
+                                  dourado: "#c9a227", prata: "#c0c0c0", verde: "#399764",
+                                  lilás: "#b8a1e3", lilas: "#b8a1e3", roxo: "#8654a8",
+                                  laranja: "#f28c28", nude: "#d8b49c", transparente: "#f5f5f5",
+                                };
+                                const colorKey = String(item.color || "").trim().toLocaleLowerCase("pt-BR").replace(/\s+/g, "-");
+                                const swatch = colorHex[colorKey] || "#e8e2ec";
+                                return (
+                                  <label key={item.id} style={{ display: "flex", flexDirection: "column", gap: 7, padding: 8, border: selection ? "2px solid #8b5cf6" : "1px solid #e8e2ec", borderRadius: 12, cursor: "pointer", background: selection ? "#faf5ff" : "#fff" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(selection)}
+                                      style={{ position: "absolute", opacity: 0, pointerEvents: "none" }}
+                                      onChange={(event) => {
+                                        const next = event.target.checked
+                                          ? [...selected, { id: item.id, options: {} }]
+                                          : selected.filter((entry) => entry.id !== item.id);
+                                        setSelected(next);
+                                        setCart({ ...cart, extras: next });
+                                        setAppliedCoupon(null);
+                                        setCouponMessage("");
+                                      }}
+                                    />
+                                    <div style={{ position: "relative", aspectRatio: "1 / 1", overflow: "hidden", borderRadius: 8, background: "#f8f5fa" }}>
+                                      {item.image ? (
+                                        <Image src={item.image} alt={`${item.name}${item.color ? ` - ${item.color}` : ""}`} fill sizes="(max-width: 600px) 45vw, 160px" style={{ objectFit: "cover" }} />
+                                      ) : (
+                                        <div style={{ height: "100%", display: "grid", placeItems: "center", color: "#716779", fontSize: 12 }}>Adicione uma foto</div>
+                                      )}
+                                      {selection && <span style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, display: "grid", placeItems: "center", borderRadius: "50%", background: "#8b5cf6", color: "white", fontSize: 13 }}>✓</span>}
+                                    </div>
+                                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600 }}>
+                                      <span aria-hidden="true" style={{ width: 13, height: 13, flexShrink: 0, borderRadius: "50%", border: "1px solid #d1c8d8", background: swatch }} />
+                                      {item.color || "Padrão"}
+                                    </span>
+                                    <b style={{ fontSize: 13 }}>{money(item.price)}</b>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    </section>
+                  );
+                })}
             </div>
+
             <div className="coupon-box">
               <input
                 placeholder="Cupom de desconto"
@@ -1026,18 +1478,34 @@ export default function Storefront({
               <span>Valor total</span>
               <b>{money(promoTotal)}</b>
               <small>
-                50% na reserva: {money(promoTotal / 2)} <span>·</span> restante
+                Pedido mínimo: R$ 80,00. 50% na reserva: {money(promoTotal / 2)} <span>·</span> restante
                 na retirada
               </small>
             </div>
-            <p className="whatsapp-instruction"><b>Importante: falta uma etapa.</b> Depois de enviar a solicitação, o WhatsApp abrirá com a mensagem do pedido. Toque em <b>Enviar</b> por lá para a loja receber seu pedido e iniciar o atendimento.</p>
+            <p className="whatsapp-instruction">
+              <b>Importante: falta uma etapa.</b> Depois de enviar a
+              solicitação, o WhatsApp abrirá com a mensagem do pedido. Toque em{" "}
+              <b>Enviar</b> por lá para a loja receber seu pedido e iniciar o
+              atendimento.
+            </p>
             {notice && <p className="notice">{notice}</p>}
-            {whatsappOrderLink && <a className="text-link whatsapp-order-link" href={whatsappOrderLink} target="_blank" rel="noreferrer">Abrir WhatsApp e enviar o resumo do pedido <ArrowRight size={15}/></a>}
+            {whatsappOrderLink && (
+              <a
+                className="text-link whatsapp-order-link"
+                href={whatsappOrderLink}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Abrir WhatsApp e enviar o resumo do pedido{" "}
+                <ArrowRight size={15} />
+              </a>
+            )}
             <button
               className="button button-pink button-full"
               onClick={finalize}
             >
-              Enviar solicitação e continuar no WhatsApp <ArrowRight size={17} />
+              Enviar solicitação e continuar no WhatsApp{" "}
+              <ArrowRight size={17} />
             </button>
             <small className="drawer-disclaimer">
               <ShieldCheck size={13} /> A reserva só é confirmada após

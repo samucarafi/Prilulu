@@ -6,7 +6,12 @@ export type InventoryUsageBooking = {
   kit?: { inventory?: Array<{ itemId: unknown; quantity: number }> } | null;
   customInventory?: Array<{ itemId: unknown; quantity: number }>;
   removedInventory?: Array<{ itemId: unknown; quantity: number }>;
-  extras?: Array<{ item: unknown; quantity?: number; selectedOptions?: Array<{ groupId: string; optionId: string }> }>;
+  extras?: Array<{
+    item: unknown;
+    quantity?: number;
+    selectedOptions?: Array<{ groupId: string; optionId: string }>;
+  }>;
+  reservedInventory?: Array<{ itemId: unknown; quantity: number }>;
 };
 
 function dayStamp(value: Date | string) {
@@ -14,14 +19,10 @@ function dayStamp(value: Date | string) {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 
-export function peakInventoryUsage(
-  bookings: InventoryUsageBooking[],
-  range?: { start: Date; end: Date },
-) {
+export function peakInventoryUsage(bookings: InventoryUsageBooking[], range?: { start: Date; end: Date }) {
   const changesByItem = new Map<string, Map<number, number>>();
   const rangeStart = range ? dayStamp(range.start) : Number.NEGATIVE_INFINITY;
   const rangeEnd = range ? dayStamp(range.end) : Number.POSITIVE_INFINITY;
-
   const addInterval = (itemId: unknown, quantity: number, start: number, end: number) => {
     if (!quantity || end < rangeStart || start > rangeEnd) return;
     const clippedStart = Math.max(start, rangeStart);
@@ -29,8 +30,7 @@ export function peakInventoryUsage(
     const id = String(itemId);
     const changes = changesByItem.get(id) ?? new Map<number, number>();
     changes.set(clippedStart, (changes.get(clippedStart) ?? 0) + quantity);
-    const afterEnd = clippedEnd + DAY_MS;
-    changes.set(afterEnd, (changes.get(afterEnd) ?? 0) - quantity);
+    changes.set(clippedEnd + DAY_MS, (changes.get(clippedEnd + DAY_MS) ?? 0) - quantity);
     changesByItem.set(id, changes);
   };
 
@@ -38,16 +38,19 @@ export function peakInventoryUsage(
     const start = dayStamp(booking.eventDate);
     const savedEnd = dayStamp(booking.returnDate ?? booking.eventDate);
     const end = Math.max(savedEnd, start + DAY_MS);
-    for (const part of booking.kit?.inventory ?? []) addInterval(part.itemId, part.quantity, start, end);
-    for (const part of booking.removedInventory ?? []) addInterval(part.itemId, -part.quantity, start, end);
-    for (const part of booking.customInventory ?? []) addInterval(part.itemId, part.quantity, start, end);
-    for (const extra of booking.extras ?? []) addInterval(extra.item, extra.quantity ?? 1, start, end);
+    if (booking.reservedInventory?.length) {
+      for (const part of booking.reservedInventory) addInterval(part.itemId, part.quantity, start, end);
+    } else {
+      for (const part of booking.kit?.inventory ?? []) addInterval(part.itemId, part.quantity, start, end);
+      for (const part of booking.removedInventory ?? []) addInterval(part.itemId, -part.quantity, start, end);
+      for (const part of booking.customInventory ?? []) addInterval(part.itemId, part.quantity, start, end);
+      for (const extra of booking.extras ?? []) addInterval(extra.item, extra.quantity ?? 1, start, end);
+    }
   }
 
   const peak = new Map<string, number>();
   for (const [itemId, changes] of changesByItem) {
-    let current = 0;
-    let maximum = 0;
+    let current = 0, maximum = 0;
     for (const [, change] of [...changes].sort(([a], [b]) => a - b)) {
       current += change;
       maximum = Math.max(maximum, current);
@@ -57,10 +60,7 @@ export function peakInventoryUsage(
   return peak;
 }
 
-export function peakOptionUsage(
-  bookings: InventoryUsageBooking[],
-  range?: { start: Date; end: Date },
-) {
+export function peakOptionUsage(bookings: InventoryUsageBooking[], range?: { start: Date; end: Date }) {
   const changesByOption = new Map<string, Map<number, number>>();
   const rangeStart = range ? dayStamp(range.start) : Number.NEGATIVE_INFINITY;
   const rangeEnd = range ? dayStamp(range.end) : Number.POSITIVE_INFINITY;
@@ -77,16 +77,14 @@ export function peakOptionUsage(
         const key = `${itemId}:${option.groupId}:${option.optionId}`;
         const changes = changesByOption.get(key) ?? new Map<number, number>();
         changes.set(clippedStart, (changes.get(clippedStart) ?? 0) + (extra.quantity ?? 1));
-        const afterEnd = clippedEnd + DAY_MS;
-        changes.set(afterEnd, (changes.get(afterEnd) ?? 0) - (extra.quantity ?? 1));
+        changes.set(clippedEnd + DAY_MS, (changes.get(clippedEnd + DAY_MS) ?? 0) - (extra.quantity ?? 1));
         changesByOption.set(key, changes);
       }
     }
   }
   const peak = new Map<string, number>();
   for (const [key, changes] of changesByOption) {
-    let current = 0;
-    let maximum = 0;
+    let current = 0, maximum = 0;
     for (const [, change] of [...changes].sort(([a], [b]) => a - b)) {
       current += change;
       maximum = Math.max(maximum, current);
