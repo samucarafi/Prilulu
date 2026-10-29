@@ -113,9 +113,7 @@ function KitCompositionPicker({
                   .map((item) => {
                     const quantity = quantities[item._id] ?? 0;
                     const detail = [
-                      item.category === "structure"
-                        ? "Estrutura oculta"
-                        : "Peça visível",
+                      item.category === "structure" ? "Estrutura oculta" : "",
                       item.theme && `Tema: ${item.theme}`,
                       item.color && `Cor: ${item.color}`,
                       item.size && `Tamanho: ${item.size}`,
@@ -686,6 +684,7 @@ export default function AdminWorkspace() {
   const [bookingSearch, setBookingSearch] = useState("");
   const [editingItemId, setEditingItemId] = useState("");
   const [editingKitId, setEditingKitId] = useState("");
+  const kitEditFormRef = useRef<HTMLFormElement>(null);
   const [newItemCategory, setNewItemCategory] = useState("component");
   const [itemFormVersion, setItemFormVersion] = useState(0);
   const load = useCallback(async () => {
@@ -699,6 +698,11 @@ export default function AdminWorkspace() {
   useEffect(() => {
     void load();
   }, [load]);
+  useEffect(() => {
+    if (editingKitId) {
+      kitEditFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [editingKitId]);
   const save = async (body: Record<string, unknown>) => {
     setBusy(true);
     setError("");
@@ -1860,6 +1864,7 @@ export default function AdminWorkspace() {
               if (!row) return null;
               return (
                 <form
+                  ref={kitEditFormRef}
                   key={`edit-${row._id}`}
                   className="admin-form admin-form-kit admin-edit-form"
                   onSubmit={(e) => void saveKitEdit(row._id, e)}
@@ -1909,9 +1914,17 @@ export default function AdminWorkspace() {
                     items={data.items.filter(
                       (item) => item.category === "component" && item.available,
                     )}
-                    initialInventory={(row.inventory ?? []).filter(
-                      (part: Row) => part.itemId?.category === "component",
-                    )}
+                    initialInventory={(() => {
+                      const visibleInventory = (row.inventory ?? []).filter(
+                        (part: Row) => part.itemId?.category === "component",
+                      );
+                      // Compatibilidade com kits antigos: neles, inventory guardava
+                      // as estruturas e customizableItemIds continha as peças visíveis.
+                      if (visibleInventory.length) return visibleInventory;
+                      return (row.customizableItemIds ?? [])
+                        .filter((item: Row) => item && item.category === "component")
+                        .map((item: Row) => ({ itemId: item, quantity: 1 }));
+                    })()}
                   />
                   <label className="admin-check">
                     <input

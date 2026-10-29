@@ -83,16 +83,44 @@ export async function POST(request: Request) {
 
     const returnDate = new Date(eventDate.getTime() + 24 * 60 * 60 * 1000);
 
-    const kit = await Kit.findOne({ slug, active: true }).lean();
-    if (!kit || !kit.inventory?.length) return NextResponse.json({ error: "Este kit não está disponível para reserva." }, { status: 409 });
+    const kit = await Kit.findOne({ slug, active: true })
+      .select("name slug priceCents inventory customizableItemIds")
+      .lean() as unknown as {
+        _id: unknown;
+        name: string;
+        slug: string;
+        priceCents: number;
+        inventory?: Array<{ itemId: unknown; quantity: number }>;
+        customizableItemIds?: unknown[];
+      } | null;
+    if (!kit || (!(kit.inventory?.length) && !(kit.customizableItemIds?.length))) {
+      return NextResponse.json({ error: "Este kit não está disponível para reserva." }, { status: 409 });
+    }
 
-    const baseInventory = kit.inventory;
+    const rawInventory = kit.inventory ?? [];
+    const rawInventoryIds = rawInventory.map((part) => String(part.itemId));
+    const rawInventoryItems = rawInventoryIds.length
+      ? await InventoryItem.find({ _id: { $in: rawInventoryIds } }).select("_id category").lean() as unknown as Array<{ _id: unknown; category: string }>
+      : [];
+    const rawCategories = new Map(rawInventoryItems.map((item) => [String(item._id), item.category]));
+    const visibleInventory = rawInventory.filter((part) => rawCategories.get(String(part.itemId)) === "component");
+    const legacyStructureInventory = rawInventory.filter((part) => rawCategories.get(String(part.itemId)) === "structure");
+    // Compatibilidade com kits legados: as peças visíveis ficavam em customizableItemIds,
+    // enquanto inventory continha apenas as estruturas físicas.
+    const baseInventory = visibleInventory.length
+      ? visibleInventory
+      : (kit.customizableItemIds ?? []).map((itemId) => ({ itemId, quantity: 1 }));
     const canEditKit = true;
 
     if ((customInventory.length || removedInventory.length) && !canEditKit) return NextResponse.json({ error: "Este kit não permite personalização." }, { status: 400 });
 
 
-    const itemIds = [...baseInventory.map((part) => String(part.itemId)), ...customInventory.map((part: { itemId: string }) => part.itemId), ...extras];
+    const itemIds = [...new Set([
+      ...baseInventory.map((part) => String(part.itemId)),
+      ...legacyStructureInventory.map((part) => String(part.itemId)),
+      ...customInventory.map((part: { itemId: string }) => part.itemId),
+      ...extras,
+    ])];
 
     const items = await InventoryItem.find({ _id: { $in: itemIds }, available: true }).lean() as unknown as Array<{ _id: unknown; category: string; name: string; totalQuantity: number; priceCents: number; customPriceCents?: number; requiresStructureId?: unknown; family?: string; color?: string; size?: string; image?: string; optionGroups?: Array<{ id: string; name: string; required: boolean; options: Array<{ id: string; name: string; image?: string; priceDeltaCents: number; stockQuantity: number | null }> }> }>;
 
@@ -153,14 +181,13 @@ export async function POST(request: Request) {
 
     const requestedInventory = new Map<string, number>();
 
-    for (const part of baseInventory) requestedInventory.set(String(part.itemId), (requestedInventory.get(String(part.itemId)) ?? 0) + part.quantity - (removedById.get(String(part.itemId)) ?? 0));
+    for (const part of baseInventory) requestedInventory.set(String(part.itemId), (requestedInventory.get(String(part.itemId)) ?? 0) + Number(part.quantity) - (removedById.get(String(part.itemId)) ?? 0));
+    for (const part of legacyStructureInventory) {
+      const id = String(part.itemId);
+      requestedInventory.set(id, Math.max(requestedInventory.get(id) ?? 0, Number(part.quantity)));
+    }
 
     let customPartsCents = 0;
-
-    const baseStructureQuantities = new Map<string, number>();
-
-    for (const part of baseInventory) baseStructureQuantities.set(String(part.itemId), (baseStructureQuantities.get(String(part.itemId)) ?? 0) + part.quantity);
-
 
     for (const part of customInventory) {
 

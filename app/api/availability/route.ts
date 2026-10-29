@@ -8,18 +8,23 @@ import { peakInventoryUsage, type InventoryUsageBooking } from "@/lib/inventory-
 export const dynamic = "force-dynamic";
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+type InventoryRequestPart = { itemId: string; quantity: number };
+type KitInventoryPart = { itemId: unknown; quantity: number };
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const kitId = typeof body.kitId === "string" ? body.kitId : "";
-    const customInventory = Array.isArray(body.customInventory)
+    const customInventory: InventoryRequestPart[] = Array.isArray(body.customInventory)
       ? body.customInventory.slice(0, 40).map((part: { itemId?: unknown; quantity?: unknown }) => ({
-          itemId: String(part.itemId ?? ""), quantity: Number(part.quantity),
+          itemId: String(part.itemId ?? ""),
+          quantity: Number(part.quantity),
         }))
       : [];
-    const removedInventory = Array.isArray(body.removedInventory)
+    const removedInventory: InventoryRequestPart[] = Array.isArray(body.removedInventory)
       ? body.removedInventory.slice(0, 40).map((part: { itemId?: unknown; quantity?: unknown }) => ({
-          itemId: String(part.itemId ?? ""), quantity: Number(part.quantity),
+          itemId: String(part.itemId ?? ""),
+          quantity: Number(part.quantity),
         }))
       : [];
     const dateText = String(body.date ?? "");
@@ -27,12 +32,12 @@ export async function POST(request: Request) {
     if (!kitId || !eventDate || Number.isNaN(eventDate.getTime())) {
       return NextResponse.json({ error: "Informe um kit e uma data válidos." }, { status: 400 });
     }
-    if (customInventory.some((part) => !part.itemId || !Number.isInteger(part.quantity) || part.quantity < 1) ||
-        new Set(customInventory.map((part) => part.itemId)).size !== customInventory.length) {
+    if (customInventory.some((part: InventoryRequestPart) => !part.itemId || !Number.isInteger(part.quantity) || part.quantity < 1) ||
+        new Set(customInventory.map((part: InventoryRequestPart) => part.itemId)).size !== customInventory.length) {
       return NextResponse.json({ available: false, message: "Confira as peças escolhidas." }, { status: 400 });
     }
-    if (removedInventory.some((part) => !part.itemId || !Number.isInteger(part.quantity) || part.quantity < 1) ||
-        new Set(removedInventory.map((part) => part.itemId)).size !== removedInventory.length) {
+    if (removedInventory.some((part: InventoryRequestPart) => !part.itemId || !Number.isInteger(part.quantity) || part.quantity < 1) ||
+        new Set(removedInventory.map((part: InventoryRequestPart) => part.itemId)).size !== removedInventory.length) {
       return NextResponse.json({ available: false, message: "Confira as peças a retirar." }, { status: 400 });
     }
 
@@ -40,15 +45,34 @@ export async function POST(request: Request) {
     if (kitId === "__montar_do_zero__") {
       return NextResponse.json({ available: false, message: "Selecione um dos kits prontos da vitrine." }, { status: 400 });
     }
-    const product = await Kit.findOne({ slug: kitId, active: true }).lean();
-    if (!product || !product.inventory?.length) {
+    const product = await Kit.findOne({ slug: kitId, active: true })
+      .select("name inventory customizableItemIds")
+      .lean() as unknown as {
+        name: string;
+        inventory?: KitInventoryPart[];
+        customizableItemIds?: unknown[];
+      } | null;
+    if (!product || (!(product.inventory?.length) && !(product.customizableItemIds?.length))) {
       return NextResponse.json({ available: false, message: "Kit indisponível ou ainda sem inventário." }, { status: 409 });
     }
 
-    const baseInventory = product?.inventory ?? [];
-    const baseIds = baseInventory.map((part) => String(part.itemId));
-    const selectedIds = customInventory.map((part) => part.itemId);
-    const itemIds = [...new Set([...baseIds, ...selectedIds])];
+    const rawInventory = product.inventory ?? [];
+    const rawItemIds = rawInventory.map((part) => String(part.itemId));
+    const rawInventoryItems = rawItemIds.length
+      ? await InventoryItem.find({ _id: { $in: rawItemIds } }).select("_id category").lean() as unknown as Array<{ _id: unknown; category: string }>
+      : [];
+    const rawCategories = new Map(rawInventoryItems.map((item) => [String(item._id), item.category]));
+    const visibleInventory = rawInventory.filter((part) => rawCategories.get(String(part.itemId)) === "component");
+    const legacyStructureInventory = rawInventory.filter((part) => rawCategories.get(String(part.itemId)) === "structure");
+    // Em kits antigos, inventory contém estruturas físicas e customizableItemIds
+    // guarda as peças visíveis incluídas. Mantém ambas as listas para validar estoque.
+    const baseInventory: KitInventoryPart[] = visibleInventory.length
+      ? visibleInventory
+      : (product.customizableItemIds ?? []).map((itemId) => ({ itemId, quantity: 1 }));
+    const baseIds = baseInventory.map((part: KitInventoryPart) => String(part.itemId));
+    const legacyStructureIds = legacyStructureInventory.map((part: KitInventoryPart) => String(part.itemId));
+    const selectedIds = customInventory.map((part: InventoryRequestPart) => part.itemId);
+    const itemIds = [...new Set([...baseIds, ...legacyStructureIds, ...selectedIds])];
     const items = await InventoryItem.find({ _id: { $in: itemIds }, available: true }).lean() as unknown as Array<{
       _id: unknown; name: string; category: string; totalQuantity: number; requiresStructureId?: unknown;
     }>;
@@ -78,13 +102,15 @@ export async function POST(request: Request) {
     const activeBookings = await Booking.find({
       eventDate: { $lte: returnDate },
       returnDate: { $gte: eventDate },
-      status: { $in: ["awaiting_contact", "awaiting_contact", "awaiting_deposit", "confirmed", "picked_up"] },
+      status: { $in: ["awaiting_contact", "awaiting_deposit", "confirmed", "picked_up"] },
     }).populate({ path: "kit", select: "inventory" }).lean();
     const used = peakInventoryUsage(activeBookings as unknown as InventoryUsageBooking[], { start: eventDate, end: returnDate });
 
-    const removedById = new Map(removedInventory.map((part) => [part.itemId, part.quantity]));
+    const removedById = new Map<string, number>(
+      removedInventory.map((part: InventoryRequestPart) => [part.itemId, part.quantity]),
+    );
     for (const removed of removedInventory) {
-      const basePart = baseInventory.find((part) => String(part.itemId) === removed.itemId);
+      const basePart = baseInventory.find((part: KitInventoryPart) => String(part.itemId) === removed.itemId);
       const item = byId.get(removed.itemId);
       if (!basePart || !item || item.category !== "component" || removed.quantity > basePart.quantity) {
         return NextResponse.json({ available: false, message: "Só é possível retirar peças visíveis que já fazem parte deste kit." }, { status: 400 });
@@ -92,11 +118,16 @@ export async function POST(request: Request) {
     }
 
     const requested = new Map<string, number>();
-    for (const part of baseInventory) {
+    for (const part of baseInventory as KitInventoryPart[]) {
       const id = String(part.itemId);
-      requested.set(id, (requested.get(id) ?? 0) + part.quantity - (removedById.get(id) ?? 0));
+      requested.set(id, (requested.get(id) ?? 0) + Number(part.quantity) - (removedById.get(id) ?? 0));
     }
-    for (const part of customInventory) requested.set(part.itemId, (requested.get(part.itemId) ?? 0) + part.quantity);
+    for (const part of customInventory as InventoryRequestPart[]) requested.set(part.itemId, (requested.get(part.itemId) ?? 0) + Number(part.quantity));
+
+    for (const part of legacyStructureInventory) {
+      const id = String(part.itemId);
+      requested.set(id, Math.max(requested.get(id) ?? 0, Number(part.quantity)));
+    }
 
     // Uma estrutura pode servir a várias peças: reserva-se a maior quantidade exigida.
     const requiredStructures = new Map<string, number>();

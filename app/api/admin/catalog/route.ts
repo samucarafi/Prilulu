@@ -806,7 +806,11 @@ export async function GET() {
     await connectMongoDB();
     const [items, kits, bookings, coupons, promotions] = await Promise.all([
       InventoryItem.find().sort({ name: 1 }).lean(),
-      Kit.find().populate("inventory.itemId").sort({ name: 1 }).lean(),
+      Kit.find()
+        .populate("inventory.itemId")
+        .populate("customizableItemIds")
+        .sort({ name: 1 })
+        .lean(),
       Booking.find()
         .populate({ path: "kit", populate: { path: "inventory.itemId" } })
         .populate("customInventory.itemId")

@@ -66,6 +66,11 @@ export async function getStorefrontData() {
           model: InventoryItem,
           select: "name category family theme color size totalQuantity available image customPriceCents requiresStructureId",
         })
+        .populate({
+          path: "customizableItemIds",
+          model: InventoryItem,
+          select: "name category family theme color size totalQuantity available image customPriceCents requiresStructureId",
+        })
         .sort({ featured: -1, createdAt: -1 })
         .lean(),
       InventoryItem.find({ category: "extra", available: true, totalQuantity: { $gt: 0 } }).sort({ name: 1 }).lean(),
@@ -98,13 +103,28 @@ export async function getStorefrontData() {
       requiresStructureId: piece.requiresStructureId ? String(piece.requiresStructureId) : undefined,
     });
 
-    const availableKits = kits.filter((kit) =>
-      (kit.inventory ?? []).length > 0 &&
-      kit.inventory.every((part) => {
-        const item = part.itemId as unknown as { available?: boolean; totalQuantity?: number } | null;
+    const availableKits = kits.filter((kit) => {
+      const inventory = kit.inventory ?? [];
+      const inventoryIsAvailable = inventory.every((part) => {
+        const item = part.itemId as unknown as {
+          available?: boolean;
+          totalQuantity?: number;
+        } | null;
         return Boolean(item && item.available && (item.totalQuantity ?? 0) >= part.quantity);
-      }),
-    );
+      });
+      const inventoryHasVisibleComponents = inventory.some((part) => {
+        const item = part.itemId as unknown as { category?: string } | null;
+        return item?.category === "component";
+      });
+      const legacyPieces = ((kit as unknown as {
+        customizableItemIds?: Array<{ category?: string; available?: boolean; totalQuantity?: number } | null>;
+      }).customizableItemIds ?? []).filter((item) => item?.category === "component");
+      const legacyCompositionIsAvailable = inventoryHasVisibleComponents ||
+        legacyPieces.every((item) => Boolean(item?.available && (item.totalQuantity ?? 0) > 0));
+      return (inventory.length > 0 || legacyPieces.length > 0) &&
+        inventoryIsAvailable &&
+        legacyCompositionIsAvailable;
+    });
 
     const extraRecords = extras as unknown as Array<{
       _id: unknown; name: string; family?: string; priceCents: number; image?: string;
@@ -114,7 +134,7 @@ export async function getStorefrontData() {
     }>;
 
     const storeKits: StoreKit[] = availableKits.map((kit, index) => {
-      const includedPieces = (kit.inventory ?? []).flatMap((part) => {
+      const inventoryVisiblePieces = (kit.inventory ?? []).flatMap((part) => {
         const item = part.itemId as unknown as {
           _id: unknown; category?: string; name: string; family?: string; theme?: string;
           color?: string; size?: string; customPriceCents?: number; image?: string;
@@ -123,8 +143,23 @@ export async function getStorefrontData() {
         if (!item || item.category !== "component") return [];
         return [toStorePiece(item as (typeof componentPieces)[number], part.quantity)];
       });
-      // Todos os kits são kits prontos editáveis. As estruturas necessárias
-      // são calculadas no servidor conforme a composição final.
+      // Compatibilidade com kits antigos: o seed anterior guardava estruturas
+      // em inventory e as peças visíveis em customizableItemIds.
+      const legacyVisiblePieces = ((kit as unknown as { customizableItemIds?: unknown[] }).customizableItemIds ?? [])
+        .flatMap((rawItem) => {
+          const item = rawItem as {
+            _id: unknown; category?: string; name: string; family?: string; theme?: string;
+            color?: string; size?: string; customPriceCents?: number; image?: string;
+            totalQuantity: number; requiresStructureId?: unknown;
+          } | null;
+          if (!item || item.category !== "component") return [];
+          return [toStorePiece(item as (typeof componentPieces)[number], 1)];
+        });
+      const includedPieces = inventoryVisiblePieces.length
+        ? inventoryVisiblePieces
+        : legacyVisiblePieces;
+      // Todos os kits são prontos editáveis. Estruturas são contabilizadas
+      // automaticamente conforme as peças visíveis selecionadas.
       const selectablePieces = componentPieces.map((piece) => toStorePiece(piece));
 
       return {
